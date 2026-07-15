@@ -70,25 +70,28 @@ function P2PForm() {
           {Number(amount).toLocaleString('vi-VN')} đ
         </p>
 
-        {result.qrCodeImage ? (
-          <img
-            src={result.qrCodeImage}
-            alt="Mã QR thanh toán MoMo"
-            className="w-56 h-56 mx-auto rounded-xl border border-neutral-100 mb-4"
-          />
-        ) : (
-          <p className="text-sm text-neutral-400 mb-4">Không tạo được ảnh QR — dùng link bên dưới</p>
-        )}
-
         {result.payUrl && (
           <a
             href={result.payUrl}
             target="_blank"
             rel="noreferrer"
-            className="block text-sm text-momo hover:underline mb-4 break-all"
+            className="block w-full py-3 rounded-xl bg-momo text-white text-sm font-semibold hover:bg-momo-dark transition mb-4"
           >
-            Mở link thanh toán
+            Mở trang thanh toán MoMo
           </a>
+        )}
+
+        {result.qrCodeImage && (
+          <>
+            <img
+              src={result.qrCodeImage}
+              alt="Mã QR mở trang thanh toán MoMo"
+              className="w-48 h-48 mx-auto rounded-xl border border-neutral-100 mb-2"
+            />
+            <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-4">
+              ⚠ Mã này chỉ để quét mở trang thanh toán trên điện thoại khác — không phải mã quét thanh toán trực tiếp bằng app ngân hàng/MoMo (do tài khoản merchant chưa được MoMo cấp deeplink thật).
+            </p>
+          </>
         )}
 
         <p className="text-xs text-neutral-400 mb-5">
@@ -158,7 +161,12 @@ function ScanForm() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ mode: 'scan', amount, paymentCode: code }),
+        body: JSON.stringify({
+          mode: 'scan',
+          amount,
+          paymentCode: code,
+          orderId: `POS${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+        }),
       })
       if (res.status === 401) {
         window.location.reload()
