@@ -1,26 +1,43 @@
 // pages/tao-giao-dich.js
 //
-// Trang tạo giao dịch, gồm 2 chế độ (tab):
-// - P2P: bố cục 2 cột — cột trái là form nhập số tiền + nội dung
-//   (POST /api/momo/create, mode=p2p), cột phải là danh sách "Đơn hàng
-//   đang mở" xếp dọc xuống, mỗi đơn 1 dòng gọn (không giới hạn số
-//   lượng, form bên trái luôn sẵn sàng tạo tiếp ngay). Mỗi đơn hiện mã
-//   QR thanh toán; 2 link (trang thanh toán / link MoMo gốc) KHÔNG hiện
-//   dạng plain text nữa — chỉ có biểu tượng liên kết (mở tab mới) và
-//   biểu tượng copy riêng. Bấm ✕ để hủy đơn sẽ hiện POPUP XÁC NHẬN của
-//   chính trang web (không dùng confirm()/alert() của trình duyệt),
-//   phải bấm xác nhận mới ẩn đơn khỏi danh sách. Mỗi đơn có đồng hồ đếm
-//   ngược 10 phút (khớp ORDER_EXPIRE_MS ở api/momo/create.js) và tự
-//   động kiểm tra trạng thái mỗi 30s trong lúc chờ (hỏi thẳng MoMo qua
+// Trang tạo giao dịch, gồm 2 chế độ (tab): P2P và Quét mã khách (Scan).
+// Cả 2 tab dùng CHUNG 1 bố cục 2 cột cố định (form bên trái rộng cố
+// định 380px, danh sách đơn bên phải) và cùng nằm trong 1 khung ngoài
+// rộng cố định (max-w-5xl) — bấm đổi qua đổi lại giữa P2P/Scan không
+// làm khung trái đổi kích thước, không bị "giật" layout.
+//
+// Cả 2 section (P2PSection, ScanSection) LUÔN được mount sẵn trong DOM
+// ngay từ đầu, chỉ ẩn/hiện bằng CSS (className hidden) khi đổi tab —
+// KHÔNG conditional-render (unmount/remount) như trước nữa. Nhờ vậy
+// state (danh sách đơn đang mở, bộ đếm giờ, các poll interval...) của
+// tab không active vẫn được giữ nguyên phía sau, chuyển qua chuyển lại
+// không còn mất đơn.
+//
+// - P2P: form nhập số tiền + nội dung (POST /api/momo/create,
+//   mode=p2p), cột phải là danh sách "Đơn hàng đang mở" xếp dọc xuống,
+//   mỗi đơn 1 dòng gọn (không giới hạn số lượng, form bên trái luôn
+//   sẵn sàng tạo tiếp ngay). Mỗi đơn hiện mã QR thanh toán; 2 link
+//   (trang thanh toán / link MoMo gốc) KHÔNG hiện dạng plain text nữa
+//   — chỉ có biểu tượng liên kết (mở tab mới) và biểu tượng copy
+//   riêng. Bấm ✕ để hủy đơn sẽ hiện POPUP XÁC NHẬN của chính trang web
+//   (không dùng confirm()/alert() của trình duyệt), phải bấm xác nhận
+//   mới ẩn đơn khỏi danh sách. Mỗi đơn có đồng hồ đếm ngược 10 phút
+//   (khớp ORDER_EXPIRE_MS ở api/momo/create.js) và tự động kiểm tra
+//   trạng thái mỗi 30s trong lúc chờ (hỏi thẳng MoMo qua
 //   /api/momo/query — KHÔNG chỉ đọc Redis nữa, vì IPN có lúc không tới
 //   nên chỉ đọc Redis sẽ đứng mãi ở PENDING dù khách đã thanh toán
 //   xong). 30s để đỡ tốn quota gọi MoMo; nút "Kiểm tra ngay" vẫn cho
 //   admin chủ động dò bất cứ lúc nào không cần chờ đủ 30s.
-// - Quét mã khách (POS): nhân viên quét mã QR MoMo của khách (18 số)
-//   -> nhập số tiền -> POST /api/momo/create (mode=scan) -> trừ tiền
-//   trực tiếp từ ví khách, có kết quả ngay.
-//   [Lưu ý: chế độ scan hiện chưa hoạt động ổn định — theo yêu cầu,
-//   phần này chỉ giữ nguyên logic/giao diện cũ, chưa sửa; sẽ xử lý sau.]
+// - Quét mã khách (Scan/POS): giờ cũng có 2 cột như P2P thay vì 1 form
+//   đơn lẻ. Form bên trái chỉ nhập số tiền -> mở 1 "đơn chờ scan" mới
+//   ở cột phải (chưa gọi API vội vì chưa có mã). Có thể mở NHIỀU đơn
+//   chờ scan cùng lúc (ví dụ nhiều khách xếp hàng). Bấm vào 1 đơn trong
+//   danh sách để CHỌN nó làm đơn đang hoạt động — đơn được chọn tô
+//   viền màu momo để dễ nhận biết; máy quét mã (đóng vai bàn phím) chỉ
+//   gõ vào ô nhập của đúng đơn đang được chọn, các đơn khác bị khoá ô
+//   nhập để tránh gõ nhầm. Quét xong (đủ 18 số hoặc bấm Enter) sẽ tự
+//   POST /api/momo/create (mode=scan) và có KẾT QUẢ NGAY LẬP TỨC (khác
+//   với P2P phải chờ poll 30s hoặc bấm "Kiểm tra ngay" thủ công).
 //
 // Không xử lý đăng nhập ở đây — pages/_app.js đã chặn ở tầng toàn
 // cục. Nếu session hết hạn giữa chừng, route trả 401 -> reload để
@@ -102,6 +119,12 @@ const IconCopy = (props) => (
 const IconCheck = (props) => (
   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
     <polyline points="20 6 9 17 4 12" />
+  </svg>
+)
+const IconCamera = (props) => (
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+    <circle cx="12" cy="13" r="4" />
   </svg>
 )
 
@@ -186,6 +209,93 @@ function ConfirmModal({ open, title, description, confirmLabel = 'Xác nhận', 
   )
 }
 
+// Popup CHI TIẾT giao dịch — gọi thẳng /api/momo/query (server-to-server)
+// mỗi lần mở để lấy dữ liệu MỚI NHẤT, ĐẦY ĐỦ NHẤT từ MoMo (transId,
+// phương thức thanh toán, thời gian xử lý...) thay vì chỉ dùng dữ liệu
+// rút gọn đã có sẵn trên dòng/thẻ đơn hàng.
+function OrderDetailModal({ open, onClose, orderId }) {
+  const [loading, setLoading] = useState(false)
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!open || !orderId) return
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    setData(null)
+    fetch(`/api/momo/query?orderId=${encodeURIComponent(orderId)}`, { credentials: 'include' })
+      .then(async (res) => {
+        if (res.status === 401) {
+          window.location.reload()
+          return
+        }
+        const json = await res.json()
+        if (cancelled) return
+        if (!res.ok) throw new Error(json.error || 'Không tải được chi tiết')
+        setData(json)
+      })
+      .catch((e) => !cancelled && setError(e.message || 'Không tải được chi tiết'))
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [open, orderId])
+
+  if (!open) return null
+
+  const rows = data
+    ? [
+        ['Mã đơn', data.orderId],
+        ['Mã giao dịch MoMo', data.transId || '—'],
+        ['Số tiền', formatVND(data.amount)],
+        ['Phương thức', data.payType || '—'],
+        [
+          'Trạng thái',
+          data.isPaid ? 'Đã thanh toán' : data.isStillPending ? 'Đang xử lý' : 'Thất bại',
+        ],
+        [
+          'Thời gian MoMo xử lý',
+          data.responseTime ? new Date(Number(data.responseTime)).toLocaleString('vi-VN') : '—',
+        ],
+        ['Thông báo từ MoMo', data.message || '—'],
+      ]
+    : []
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-bold text-neutral-900">Chi tiết giao dịch</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-neutral-400 hover:text-neutral-600 w-6 h-6 flex items-center justify-center"
+          >
+            ✕
+          </button>
+        </div>
+
+        {loading && <p className="text-sm text-neutral-500 text-center py-6">Đang hỏi MoMo...</p>}
+        {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+        {!loading && !error && data && (
+          <div className="flex flex-col gap-2.5">
+            {rows.map(([label, value]) => (
+              <div key={label} className="flex items-start justify-between gap-3 text-sm">
+                <span className="text-neutral-500 shrink-0">{label}</span>
+                <span className="font-mono text-neutral-900 text-right break-all">{value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // Vòng tròn đếm ngược nhỏ, đặt góc thẻ. Màu chuyển momo -> vàng -> đỏ khi
 // gần hết hạn, để admin liếc mắt là biết đơn nào sắp hết hạn mà chưa quét.
 function CountdownRing({ secondsLeft, isExpired }) {
@@ -232,6 +342,7 @@ function TransactionRow({ tx, onRemove }) {
   const [checking, setChecking] = useState(false)
   const [checkedOnce, setCheckedOnce] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [showDetail, setShowDetail] = useState(false)
   const { secondsLeft, isExpired } = useCountdown(tx.expiresAt)
   const expiredAtRef = useRef(null)
 
@@ -294,13 +405,17 @@ function TransactionRow({ tx, onRemove }) {
 
   return (
     <div className="bg-white rounded-2xl border border-neutral-200 p-4 relative">
-      <button
-        onClick={() => setConfirmRemove(true)}
-        className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
-        title="Hủy đơn"
-      >
-        ✕
-      </button>
+      {/* Đã thu tiền rồi thì KHÔNG cho hủy nữa — ẩn hẳn nút ✕ để tránh
+          bấm nhầm làm mất đơn đã thanh toán khỏi danh sách theo dõi. */}
+      {status !== 'PAID' && (
+        <button
+          onClick={() => setConfirmRemove(true)}
+          className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
+          title="Hủy đơn"
+        >
+          ✕
+        </button>
+      )}
 
       <ConfirmModal
         open={confirmRemove}
@@ -336,10 +451,24 @@ function TransactionRow({ tx, onRemove }) {
       </div>
 
       {checkedOnce && status === 'PAID' && (
-        <p className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mt-3 text-center font-semibold">
-          ✓ Giao dịch thành công
-        </p>
+        <div className="mt-3">
+          <p className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 text-center font-semibold">
+            ✓ Giao dịch thành công
+          </p>
+          <div className="flex items-center justify-between gap-2 text-[12px] text-neutral-500 mt-2 px-1">
+            <span className="font-mono truncate">{tx.orderId}</span>
+            <span className="font-mono shrink-0">{formatVND(tx.amount)}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDetail(true)}
+            className="w-full py-2.5 rounded-xl border border-emerald-200 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 transition mt-2"
+          >
+            Xem chi tiết giao dịch
+          </button>
+        </div>
       )}
+      <OrderDetailModal open={showDetail} onClose={() => setShowDetail(false)} orderId={tx.orderId} />
       {checkedOnce && status === 'FAILED' && (
         <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3 text-center font-semibold">
           ✕ Giao dịch thất bại
@@ -353,13 +482,15 @@ function TransactionRow({ tx, onRemove }) {
 
       {showPayInfo && (
         <div className="flex flex-col items-center gap-3 mt-3">
-          {tx.qrCodeImage && (
-            <img
-              src={tx.qrCodeImage}
-              alt="Mã QR thanh toán"
-              className="w-40 h-40 rounded-xl border border-neutral-200 object-contain bg-white"
-            />
-          )}
+          {/* Lấy ảnh QR trực tiếp từ /api/momo/qr-extract?orderId=... (gọi
+              URL này là ra luôn ảnh QR thật) thay vì phụ thuộc vào
+              qrCodeImage trả về lúc tạo đơn — tránh trường hợp Puppeteer
+              chưa kịp trích xong khi vừa tạo xong đơn. */}
+          <img
+            src={`/api/momo/qr-extract?orderId=${encodeURIComponent(tx.orderId)}`}
+            alt="Mã QR thanh toán"
+            className="w-40 h-40 rounded-xl border border-neutral-200 object-contain bg-white"
+          />
           <div className="w-full flex flex-col gap-2">
             <IconLinkRow label="Link thanh toán gửi khách" value={thanhToanUrl} href={thanhToanUrl} />
             {tx.payUrl && <IconLinkRow label="Link thanh toán MoMo" value={tx.payUrl} href={tx.payUrl} />}
@@ -367,14 +498,16 @@ function TransactionRow({ tx, onRemove }) {
         </div>
       )}
 
-      <button
-        onClick={handleCheck}
-        disabled={checking}
-        title="Hỏi trực tiếp MoMo, không chờ webhook"
-        className="w-full py-2.5 rounded-xl bg-momo text-white text-xs font-semibold hover:bg-momo-dark transition disabled:opacity-50 mt-3"
-      >
-        {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
-      </button>
+      {status !== 'PAID' && status !== 'FAILED' && (
+        <button
+          onClick={handleCheck}
+          disabled={checking}
+          title="Hỏi trực tiếp MoMo, không chờ webhook"
+          className="w-full py-2.5 rounded-xl bg-momo text-white text-xs font-semibold hover:bg-momo-dark transition disabled:opacity-50 mt-3"
+        >
+          {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
+        </button>
+      )}
     </div>
   )
 }
@@ -459,7 +592,6 @@ function P2POrderForm({ stores, storeId, setStoreId, onCreated }) {
         orderId: data.orderId,
         amount: Number(amount),
         payUrl: data.payUrl,
-        qrCodeImage: data.qrCodeImage,
         expiresAt: data.expiresAt,
       })
       setAmount('')
@@ -536,8 +668,7 @@ function OrdersPanel({ transactions, onRemove }) {
 // Bố cục 2 cột: trái là form tạo đơn, phải là danh sách đơn đang mở.
 // State danh sách được giữ ở đây (không phải trong form) để cột phải
 // luôn cập nhật ngay khi cột trái tạo đơn thành công.
-function P2PSection() {
-  const { stores, storeId, setStoreId } = useStores()
+function P2PSection({ stores, storeId, setStoreId }) {
   const [transactions, setTransactions] = useState([]) // cộng dồn, không giới hạn
 
   function handleCreated(tx) {
@@ -558,19 +689,162 @@ function P2PSection() {
   )
 }
 
-function ScanForm() {
+// Cột trái tab Scan — chỉ nhập số tiền rồi MỞ 1 "đơn chờ scan" mới ở
+// cột phải (chưa gọi API vì chưa có mã). Cho phép mở liên tiếp nhiều
+// đơn (ví dụ nhiều khách xếp hàng chờ quét).
+function ScanOrderForm({ stores, storeId, setStoreId, onCreated }) {
   const [amount, setAmount] = useState('')
-  const [code, setCode] = useState('')
-  const { stores, storeId, setStoreId } = useStores()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [result, setResult] = useState(null)
 
-  async function handleSubmit(e) {
+  function handleSubmit(e) {
     e.preventDefault()
-    setError('')
-    setResult(null)
-    setLoading(true)
+    if (!amount) return
+    onCreated({
+      localId: `scan_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      amount: Number(amount),
+      storeId,
+      code: '',
+      status: 'INPUT', // INPUT: chờ quét | PROCESSING | PAID | FAILED
+      message: '',
+    })
+    setAmount('')
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-neutral-200 p-6">
+      <StoreSelect stores={stores} storeId={storeId} setStoreId={setStoreId} />
+
+      <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={1000}
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        placeholder="Ví dụ: 50000"
+        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+        required
+      />
+
+      <button
+        type="submit"
+        className="w-full py-3.5 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition"
+      >
+        Mở đơn chờ scan
+      </button>
+      <p className="text-[11px] text-neutral-400 text-center mt-3">
+        Đơn sẽ hiện bên phải — chọn đơn (tô viền) rồi quét mã QR của khách vào ô nhập của đơn đó
+      </p>
+    </form>
+  )
+}
+
+// 1 đơn chờ scan trong danh sách bên phải. Chỉ đơn ĐANG ĐƯỢC CHỌN mới
+// mở khoá ô nhập mã (tránh máy quét gõ nhầm sang đơn khác khi đang mở
+// nhiều đơn cùng lúc) — bấm vào thẻ để chọn, thẻ được chọn tô viền màu
+// momo. Quét đủ 18 số hoặc bấm Enter sẽ tự gửi và có kết quả NGAY LẬP
+// TỨC (không cần chờ poll như P2P).
+function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const [showDetail, setShowDetail] = useState(false)
+  // Mặc định KHÔNG mở khung camera — chỉ mở khi admin chủ động bấm nút.
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [cameraError, setCameraError] = useState('')
+  const inputRef = useRef(null)
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const rafRef = useRef(null)
+  const detectorRef = useRef(null)
+
+  useEffect(() => {
+    if (selected && order.status === 'INPUT' && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }, [selected, order.status])
+
+  function stopCamera() {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+    }
+    detectorRef.current = null
+  }
+
+  // Bật camera thật (getUserMedia) chỉ khi cameraOpen=true, đơn đang được
+  // CHỌN và còn ở trạng thái chờ quét — tắt/nhả camera ngay khi 1 trong 3
+  // điều kiện đó không còn đúng (đổi đơn khác, quét xong, hủy đơn...) để
+  // tránh giữ camera chạy ngầm không cần thiết.
+  useEffect(() => {
+    if (!cameraOpen || !selected || order.status !== 'INPUT') {
+      stopCamera()
+      return
+    }
+
+    let cancelled = false
+    setCameraError('')
+
+    async function scanLoop() {
+      if (cancelled || !videoRef.current || !detectorRef.current) return
+      try {
+        const codes = await detectorRef.current.detect(videoRef.current)
+        if (codes.length > 0 && codes[0].rawValue) {
+          const value = codes[0].rawValue
+          cancelled = true
+          setCameraOpen(false)
+          onUpdate(order.localId, { code: value })
+          submitCode(value)
+          return
+        }
+      } catch {
+        /* bỏ qua lỗi ở 1 khung hình, thử lại khung kế tiếp */
+      }
+      rafRef.current = requestAnimationFrame(scanLoop)
+    }
+
+    async function start() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+        })
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play()
+        }
+        if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+          detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] })
+          scanLoop()
+        } else {
+          setCameraError('Trình duyệt này chưa hỗ trợ tự nhận diện mã QR qua camera — dùng máy quét mã rời hoặc nhập/dán tay.')
+        }
+      } catch {
+        if (!cancelled) setCameraError('Không mở được camera — kiểm tra quyền truy cập camera của trình duyệt.')
+      }
+    }
+
+    start()
+    return () => {
+      cancelled = true
+      stopCamera()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraOpen, selected, order.status])
+
+  async function submitCode(code) {
+    const trimmed = String(code || '').trim()
+    if (!trimmed || order.status !== 'INPUT') return
+    // Chốt orderId NGAY từ đầu (không phát sinh lại mỗi lần) và LƯU vào
+    // state của đơn — cần giữ lại để nút "Xem chi tiết" gọi /api/momo/query
+    // sau khi có kết quả.
+    const orderId = order.orderId || `POS${Date.now()}${Math.random().toString(36).slice(2, 6)}`
+    onUpdate(order.localId, { status: 'PROCESSING', code: trimmed, orderId })
     try {
       const res = await fetch('/api/momo/create', {
         method: 'POST',
@@ -578,10 +852,10 @@ function ScanForm() {
         credentials: 'include',
         body: JSON.stringify({
           mode: 'scan',
-          amount,
-          paymentCode: code,
-          storeId,
-          orderId: `POS${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+          amount: order.amount,
+          paymentCode: trimmed,
+          storeId: order.storeId,
+          orderId,
         }),
       })
       if (res.status === 401) {
@@ -590,75 +864,270 @@ function ScanForm() {
       }
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error || 'Không xử lý được giao dịch')
+        onUpdate(order.localId, { status: 'FAILED', message: data.error || 'Không xử lý được giao dịch', orderId })
         return
       }
-      setResult(data)
-      setCode('')
-      setAmount('')
+      onUpdate(order.localId, {
+        status: data.resultCode === 0 ? 'PAID' : 'FAILED',
+        message: data.resultCode === 0 ? '' : data.message || 'Giao dịch thất bại',
+        transId: data.transId ? String(data.transId) : null,
+        orderId,
+      })
     } catch {
-      setError('Lỗi kết nối, thử lại sau')
-    } finally {
-      setLoading(false)
+      onUpdate(order.localId, { status: 'FAILED', message: 'Lỗi kết nối, thử lại sau', orderId })
     }
   }
 
+  function handleCodeChange(e) {
+    const val = e.target.value
+    onUpdate(order.localId, { code: val })
+    if (val.trim().length >= 18) submitCode(val)
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      submitCode(order.code)
+    }
+  }
+
+  const badgeStyle =
+    order.status === 'PAID'
+      ? 'bg-emerald-50 text-emerald-700'
+      : order.status === 'FAILED'
+      ? 'bg-red-50 text-red-700'
+      : order.status === 'PROCESSING'
+      ? 'bg-amber-50 text-amber-700'
+      : 'bg-neutral-100 text-neutral-600'
+  const badgeText =
+    order.status === 'PAID'
+      ? 'Đã thu tiền'
+      : order.status === 'FAILED'
+      ? 'Thất bại'
+      : order.status === 'PROCESSING'
+      ? 'Đang xử lý...'
+      : 'Chờ quét mã'
+
   return (
-    <div className="bg-white rounded-2xl border border-neutral-200 p-6">
-      <form onSubmit={handleSubmit}>
-        <StoreSelect stores={stores} storeId={storeId} setStoreId={setStoreId} />
-
-        <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
-        <input
-          type="number"
-          inputMode="numeric"
-          min={1000}
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="Ví dụ: 50000"
-          className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-          required
-        />
-
-        <label className="block text-sm font-medium text-neutral-700 mb-1">Mã thanh toán (18 số)</label>
-        <input
-          type="text"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="Quét/dán mã QR của khách"
-          className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-          required
-        />
-
-        {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{error}</p>}
-        {result && (
-          <p
-            className={`text-sm rounded-lg px-3 py-2 mb-4 ${
-              result.resultCode === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-            }`}
-          >
-            {result.resultCode === 0 ? '✓ Thu tiền thành công' : result.message || 'Giao dịch thất bại'}
-          </p>
-        )}
-
+    <div
+      onClick={() => order.status === 'INPUT' && onSelect(order.localId)}
+      className={`bg-white rounded-2xl border p-4 relative transition ${
+        order.status === 'INPUT' ? 'cursor-pointer' : ''
+      } ${selected ? 'border-momo ring-2 ring-momo/30' : 'border-neutral-200'}`}
+    >
+      {/* Đã thu tiền rồi thì KHÔNG cho hủy nữa — ẩn hẳn nút ✕ để tránh
+          bấm nhầm làm mất đơn đã thanh toán khỏi danh sách theo dõi. */}
+      {order.status !== 'PAID' && (
         <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-3.5 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition disabled:opacity-50"
+          onClick={(e) => {
+            e.stopPropagation()
+            setConfirmRemove(true)
+          }}
+          className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
+          title="Hủy đơn"
         >
-          {loading ? 'Đang xử lý...' : 'Thu tiền'}
+          ✕
         </button>
-      </form>
+      )}
+
+      <ConfirmModal
+        open={confirmRemove}
+        title="Hủy đơn chờ scan này?"
+        description="Đơn sẽ được ẩn khỏi danh sách trên màn hình này."
+        confirmLabel="Hủy đơn"
+        onCancel={() => setConfirmRemove(false)}
+        onConfirm={() => {
+          setConfirmRemove(false)
+          onRemove(order.localId)
+        }}
+      />
+
+      <div className="flex items-center gap-3 pr-6">
+        <div className="w-10 h-10 shrink-0 rounded-full bg-neutral-50 flex items-center justify-center text-base">
+          {order.status === 'PAID' ? '✓' : order.status === 'FAILED' ? '✕' : order.status === 'PROCESSING' ? '…' : '▢'}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${badgeStyle}`}>
+              {badgeText}
+            </span>
+            {selected && order.status === 'INPUT' && (
+              <span className="text-[11px] font-semibold text-momo">● Đang chọn</span>
+            )}
+          </div>
+          <p className="font-mono font-extrabold text-lg text-neutral-900 leading-tight mt-0.5">
+            {formatVND(order.amount)}
+          </p>
+        </div>
+      </div>
+
+      {order.status === 'INPUT' && (
+        <>
+          <div className="flex items-center gap-2 mt-3">
+            <input
+              ref={inputRef}
+              type="text"
+              value={order.code}
+              onChange={handleCodeChange}
+              onKeyDown={handleKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              disabled={!selected}
+              placeholder={selected ? 'Quét/dán mã QR của khách (18 số)' : 'Bấm chọn đơn này để quét'}
+              className="flex-1 min-w-0 rounded-xl border border-neutral-200 px-4 py-3 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo disabled:bg-neutral-50 disabled:text-neutral-400"
+            />
+            {/* Nút hiện/ẩn khung camera — khung camera mặc định ĐÓNG, chỉ mở
+                khi admin chủ động bấm nút này (dùng cho máy không có đầu
+                đọc mã rời, quét trực tiếp bằng camera thiết bị). */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!selected) return
+                setCameraOpen((v) => !v)
+              }}
+              disabled={!selected}
+              title={cameraOpen ? 'Ẩn khung camera' : 'Quét bằng camera'}
+              className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-xl border transition disabled:opacity-40 ${
+                cameraOpen
+                  ? 'bg-momo text-white border-momo'
+                  : 'border-neutral-200 text-neutral-500 hover:bg-neutral-100'
+              }`}
+            >
+              <IconCamera />
+            </button>
+          </div>
+
+          {cameraOpen && (
+            <div
+              className="mt-3 rounded-xl overflow-hidden border border-neutral-200 bg-black relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <video ref={videoRef} className="w-full aspect-square object-cover" muted playsInline />
+              <div className="absolute inset-8 border-2 border-white/70 rounded-lg pointer-events-none" />
+              <p className="absolute bottom-2 inset-x-0 text-center text-[11px] text-white/90">
+                Đưa mã QR của khách vào khung
+              </p>
+            </div>
+          )}
+          {cameraError && (
+            <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-2">{cameraError}</p>
+          )}
+        </>
+      )}
+
+      {order.status === 'FAILED' && order.message && (
+        <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3">{order.message}</p>
+      )}
+      {order.status === 'PAID' && (
+        <div className="mt-3">
+          <p className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 text-center font-semibold">
+            ✓ Thu tiền thành công
+          </p>
+          <div className="flex flex-col gap-1 text-[12px] text-neutral-500 mt-2 px-1">
+            {order.orderId && (
+              <div className="flex items-center justify-between gap-2">
+                <span>Mã đơn</span>
+                <span className="font-mono text-neutral-700 truncate">{order.orderId}</span>
+              </div>
+            )}
+            {order.transId && (
+              <div className="flex items-center justify-between gap-2">
+                <span>Mã GD MoMo</span>
+                <span className="font-mono text-neutral-700 truncate">{order.transId}</span>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDetail(true)}
+            className="w-full py-2.5 rounded-xl border border-emerald-200 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 transition mt-2"
+          >
+            Xem chi tiết giao dịch
+          </button>
+        </div>
+      )}
+      <OrderDetailModal open={showDetail} onClose={() => setShowDetail(false)} orderId={order.orderId} />
+    </div>
+  )
+}
+
+// Cột phải tab Scan — danh sách các đơn chờ scan, có thể mở nhiều đơn
+// cùng lúc; đơn đang được chọn tô viền để dễ nhận biết đang quét đơn nào.
+function ScanOrdersPanel({ orders, selectedId, onSelect, onRemove, onUpdate }) {
+  return (
+    <div className="bg-white rounded-2xl border border-neutral-200 p-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+      <div className="flex items-center justify-between mb-3 px-1">
+        <h2 className="text-sm font-semibold text-neutral-700">Đơn chờ scan</h2>
+        <span className="text-xs font-mono text-neutral-400">{orders.length}</span>
+      </div>
+      {orders.length === 0 ? (
+        <p className="text-sm text-neutral-400 text-center py-10">
+          Chưa có đơn nào — nhập số tiền bên trái để mở đơn chờ quét
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {orders.map((o) => (
+            <ScanOrderCard
+              key={o.localId}
+              order={o}
+              selected={o.localId === selectedId}
+              onSelect={onSelect}
+              onRemove={onRemove}
+              onUpdate={onUpdate}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Bố cục 2 cột giống hệt P2PSection: trái là form mở đơn chờ scan,
+// phải là danh sách các đơn đang chờ/đang xử lý. State giữ ở đây nên
+// vẫn còn nguyên khi tab này bị ẩn đi (xem TaoGiaoDich bên dưới).
+function ScanSection({ stores, storeId, setStoreId }) {
+  const [orders, setOrders] = useState([])
+  const [selectedId, setSelectedId] = useState(null)
+
+  function handleCreated(order) {
+    setOrders((cur) => [order, ...cur])
+    setSelectedId(order.localId) // đơn mới mở -> tự chọn luôn để quét ngay
+  }
+
+  function handleRemove(localId) {
+    setOrders((cur) => cur.filter((o) => o.localId !== localId))
+    setSelectedId((cur) => (cur === localId ? null : cur))
+  }
+
+  function handleUpdate(localId, patch) {
+    setOrders((cur) => cur.map((o) => (o.localId === localId ? { ...o, ...patch } : o)))
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
+      <ScanOrderForm stores={stores} storeId={storeId} setStoreId={setStoreId} onCreated={handleCreated} />
+      <ScanOrdersPanel
+        orders={orders}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onRemove={handleRemove}
+        onUpdate={handleUpdate}
+      />
     </div>
   )
 }
 
 export default function TaoGiaoDich() {
   const [tab, setTab] = useState('p2p')
+  // Gọi 1 lần duy nhất, dùng chung cho cả 2 tab — vừa đỡ fetch trùng
+  // /api/momo/stores, vừa giữ cửa hàng đang chọn đồng bộ khi đổi tab.
+  const { stores, storeId, setStoreId } = useStores()
 
   return (
     <main className="min-h-screen px-4 py-10 bg-neutral-50">
-      <div className={tab === 'p2p' ? 'max-w-5xl mx-auto' : 'max-w-4xl mx-auto'}>
+      {/* Khung ngoài LUÔN 1 kích thước (max-w-5xl) bất kể đang ở tab nào
+          — đổi tab không còn làm layout đổi bề rộng/giật hình nữa. */}
+      <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-extrabold text-neutral-900">Tạo giao dịch</h1>
           <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-800">
@@ -682,13 +1151,15 @@ export default function TaoGiaoDich() {
           ))}
         </div>
 
-        {tab === 'p2p' ? (
-          <P2PSection />
-        ) : (
-          <div className="max-w-sm w-full mx-auto">
-            <ScanForm />
-          </div>
-        )}
+        {/* Cả 2 tab LUÔN được mount sẵn, chỉ ẩn/hiện bằng class "hidden"
+            — không conditional-render nữa nên đơn hàng/đơn chờ scan
+            đang mở không bị mất khi bấm qua bấm lại giữa 2 tab. */}
+        <div className={tab === 'p2p' ? '' : 'hidden'}>
+          <P2PSection stores={stores} storeId={storeId} setStoreId={setStoreId} />
+        </div>
+        <div className={tab === 'scan' ? '' : 'hidden'}>
+          <ScanSection stores={stores} storeId={storeId} setStoreId={setStoreId} />
+        </div>
       </div>
     </main>
   )
