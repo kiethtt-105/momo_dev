@@ -399,12 +399,20 @@ function P2PForm() {
       </form>
 
       {transactions.length > 0 && (
-        <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scroll-px-4 -mx-4 px-4">
-          {transactions.map((tx) => (
-            <div key={tx.orderId} className="shrink-0 w-80 snap-start">
-              <TransactionCard tx={tx} onRemove={handleRemove} />
-            </div>
-          ))}
+        <div className="bg-white rounded-2xl border border-neutral-200 p-4">
+          <div className="flex items-center justify-between mb-3 px-1">
+            <h2 className="text-sm font-semibold text-neutral-700">
+              Giao dịch đang mở
+            </h2>
+            <span className="text-xs font-mono text-neutral-400">{transactions.length}</span>
+          </div>
+          <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scroll-px-1">
+            {transactions.map((tx) => (
+              <div key={tx.orderId} className="shrink-0 w-72 snap-start">
+                <TransactionCard tx={tx} onRemove={handleRemove} />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
