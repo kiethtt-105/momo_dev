@@ -49,6 +49,15 @@ function buildOrderId(rawOrderId, prefix) {
   return `${prefix}${Date.now()}${Math.random().toString(36).slice(2, 6)}`
 }
 
+// Thời hạn giao dịch: 10 phút kể từ lúc tạo đơn (dùng cho luồng p2p, nơi
+// khách chưa thanh toán ngay mà cần quét QR/mở link — quá hạn thì FE/BE
+// có thể coi đơn là hết hiệu lực dù MoMo chưa báo IPN).
+const ORDER_EXPIRE_MS = 10 * 60 * 1000
+
+function buildExpiresAt(createdAtIso) {
+  return new Date(new Date(createdAtIso).getTime() + ORDER_EXPIRE_MS).toISOString()
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
     res.setHeader('Allow', ['GET', 'POST'])
@@ -90,6 +99,7 @@ async function handleP2P(params, res) {
   const store = resolveStore((params.storeId || '').toString().trim())
   const { id: storeId, name: storeName, partnerName } = store
   const now = new Date().toISOString()
+  const expiresAt = buildExpiresAt(now)
 
   try {
     // Tạo bản ghi PENDING trước — nếu gọi MoMo lỗi/timeout vẫn còn dấu vết
@@ -98,7 +108,7 @@ async function handleP2P(params, res) {
     // sau này khi khách thanh toán xong).
     await saveOrder(orderId, {
       orderId, amount: amt, orderInfo, status: 'PENDING',
-      createdAt: now, paidAt: null, transId: '', payType: '',
+      createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
       paymentOption: '', source: 'create-p2p',
       storeId, storeName, partnerName, type: 'p2p',
     })
@@ -110,7 +120,7 @@ async function handleP2P(params, res) {
       const finalMessage = formatResultCodeMessage(result.resultCode, result.message)
       await saveOrder(orderId, {
         orderId, amount: amt, orderInfo, status: 'FAILED',
-        createdAt: now, paidAt: null, transId: '', payType: '',
+        createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
         paymentOption: '', source: 'create-p2p',
         storeId, storeName, partnerName, error: result.message || '',
         message: finalMessage, resultCode: result.resultCode,
@@ -133,7 +143,7 @@ async function handleP2P(params, res) {
 
     await saveOrder(orderId, {
       orderId, amount: amt, orderInfo, status: 'PENDING',
-      createdAt: now, paidAt: null, transId: '', payType: '',
+      createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
       paymentOption: '', source: 'create-p2p',
       storeId, storeName, partnerName,
       payUrl: result.payUrl || '', deeplink: result.deeplink || '',
@@ -155,7 +165,7 @@ async function handleP2P(params, res) {
     try {
       await saveOrder(orderId, {
         orderId, amount: amt, orderInfo, status: 'FAILED',
-        createdAt: now, paidAt: null, transId: '', payType: '',
+        createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
         paymentOption: '', source: 'create-p2p',
         storeId, storeName, partnerName, error: 'server_error',
         message: `⚠ Lỗi hệ thống (server) khi gọi MoMo — ADMIN cần kiểm tra log server: ${err.message || 'không rõ nguyên nhân'}`,
