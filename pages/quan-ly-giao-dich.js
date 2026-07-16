@@ -208,42 +208,6 @@ export default function QuanLyGiaoDich() {
   const [actionId, setActionId] = useState('') // orderId đang xử lý cancel/delete
   const [expandedId, setExpandedId] = useState('') // orderId đang mở rộng chi tiết
 
-  // Form quét mã khách (POS)
-  const [scanOpen, setScanOpen] = useState(false)
-  const [scanAmount, setScanAmount] = useState('')
-  const [scanCode, setScanCode] = useState('')
-  const [scanLoading, setScanLoading] = useState(false)
-  const [scanError, setScanError] = useState('')
-  const [scanResult, setScanResult] = useState(null)
-
-  async function handleScanSubmit(e) {
-    e.preventDefault()
-    setScanError('')
-    setScanResult(null)
-    setScanLoading(true)
-    try {
-      const res = await fetch('/api/momo/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ mode: 'scan', amount: scanAmount, paymentCode: scanCode }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setScanError(data.error || 'Không xử lý được giao dịch')
-        return
-      }
-      setScanResult(data)
-      setScanCode('')
-      setScanAmount('')
-      await loadOrders()
-    } catch {
-      setScanError('Lỗi kết nối, thử lại sau')
-    } finally {
-      setScanLoading(false)
-    }
-  }
-
   async function loadOrders() {
     setLoading(true)
     try {
@@ -320,8 +284,8 @@ export default function QuanLyGiaoDich() {
   }
 
   return (
-    <main className="min-h-screen px-4 py-8 bg-neutral-50">
-      <div className="max-w-5xl mx-auto">
+    <main className="min-h-screen px-6 py-8 bg-neutral-50">
+      <div className="w-full">
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="text-xl font-extrabold text-neutral-900">Quản lý giao dịch</h1>
@@ -348,12 +312,14 @@ export default function QuanLyGiaoDich() {
                 </button>
               )}
             </div>
-            <button
-              onClick={() => setScanOpen((v) => !v)}
+            <a
+              href="/tao-giao-dich"
+              target="_blank"
+              rel="noreferrer"
               className="px-4 py-2 rounded-xl bg-momo text-white text-sm font-semibold hover:bg-momo-dark transition"
             >
-              Quét mã khách
-            </button>
+              Giao Dịch Mới
+            </a>
           </div>
         </div>
 
@@ -392,48 +358,6 @@ export default function QuanLyGiaoDich() {
           </div>
         </div>
 
-        {scanOpen && (
-          <div className="bg-white rounded-2xl border border-neutral-200 p-5 mb-4">
-            <h2 className="font-bold text-neutral-900 mb-3">Quét mã khách (POS)</h2>
-            <form onSubmit={handleScanSubmit} className="flex flex-wrap gap-3 items-start">
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1000}
-                value={scanAmount}
-                onChange={(e) => setScanAmount(e.target.value)}
-                placeholder="Số tiền"
-                className="rounded-xl border border-neutral-200 px-3 py-2 text-sm w-32 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-                required
-              />
-              <input
-                type="text"
-                value={scanCode}
-                onChange={(e) => setScanCode(e.target.value)}
-                placeholder="Mã thanh toán (18 số)"
-                className="rounded-xl border border-neutral-200 px-3 py-2 text-sm w-56 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-                required
-              />
-              <button
-                type="submit"
-                disabled={scanLoading}
-                className="px-4 py-2 rounded-xl bg-momo text-white text-sm font-semibold hover:bg-momo-dark transition disabled:opacity-50"
-              >
-                {scanLoading ? 'Đang xử lý...' : 'Thu tiền'}
-              </button>
-            </form>
-
-            {scanError && (
-              <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3">{scanError}</p>
-            )}
-            {scanResult && (
-              <p className={`text-sm rounded-lg px-3 py-2 mt-3 ${scanResult.resultCode === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-                {scanResult.resultCode === 0 ? '✓ Thu tiền thành công' : scanResult.message || 'Giao dịch thất bại'}
-              </p>
-            )}
-          </div>
-        )}
-
         {loading && <p className="text-neutral-400 text-sm mb-3">Đang tải...</p>}
 
         <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
@@ -451,7 +375,7 @@ export default function QuanLyGiaoDich() {
                   <div className="flex items-center justify-between gap-3 px-5 py-4">
                     <button
                       onClick={() => toggleExpand(o.orderId)}
-                      className="grid grid-cols-1 sm:grid-cols-[minmax(0,1.4fr)_130px_150px] items-center gap-2 sm:gap-4 min-w-0 text-left flex-1"
+                      className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_180px_200px] items-center gap-2 sm:gap-6 min-w-0 text-left flex-1"
                     >
                       <span className="flex items-center gap-3 min-w-0">
                         <span className={`shrink-0 text-neutral-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
