@@ -7,7 +7,11 @@ import { verifyIpnSignature } from '../../../lib/momo'
 import { getOrder, saveOrder } from '../../../lib/orders'
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).end()
+  if (req.method !== 'POST') {
+    console.error(`[MoMo IPN] Sai method: ${req.method} ${req.url} — có thể do redirect (kiểm tra ipnUrl domain/protocol)`)
+    return res.status(405).end()
+
+  }
 
   const body = req.body
   if (!verifyIpnSignature(body)) {

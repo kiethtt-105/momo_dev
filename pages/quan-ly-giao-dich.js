@@ -86,6 +86,13 @@ function formatTime(iso) {
   return d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+function formatDurationMs(ms) {
+  const n = Number(ms)
+  if (!n || Number.isNaN(n)) return null
+  const minutes = Math.round(n / 60000)
+  return `${minutes} phút`
+}
+
 // Danh sách field hiển thị trong phần mở rộng — label + cách lấy giá trị.
 // Field nào rỗng/undefined sẽ tự ẩn, không hiện dòng "—" rối mắt.
 const DETAIL_FIELDS = [
@@ -101,9 +108,23 @@ const DETAIL_FIELDS = [
   { label: 'Request ID', get: (o) => o.requestId },
   { label: 'Order type (MoMo)', get: (o) => o.orderType },
   { label: 'Mã đã quét (POS)', get: (o) => o.submittedCode },
+  { label: 'Thời gian tạo đơn', get: (o) => (o.createdAt ? formatTime(o.createdAt) : null) },
   { label: 'Thời gian thanh toán', get: (o) => (o.paidAt ? formatTime(o.paidAt) : null) },
+  { label: 'Hết hạn lúc', get: (o) => (o.expiresAt ? formatTime(o.expiresAt) : null) },
+  { label: 'Thời hạn giao dịch', get: (o) => formatDurationMs(o.orderExpireMs) },
   { label: 'Response time (MoMo)', get: (o) => o.responseTime },
+  { label: 'Extra data (MoMo)', get: (o) => o.extraData },
   { label: 'Lỗi hệ thống', get: (o) => o.error },
+]
+
+// Các đường link mở tab mới hiển thị trong phần chi tiết — field nào có
+// giá trị mới hiện, không cứng hiện đủ 4 link như trước (chỉ payUrl).
+const DETAIL_LINKS = [
+  { label: '🔗 Link thanh toán MoMo (payUrl)', get: (o) => o.payUrl },
+  { label: '🔗 Deeplink MoMo', get: (o) => o.deeplink },
+  { label: '🔗 Applink MoMo', get: (o) => o.applink },
+  { label: '🔗 Deeplink Mini App', get: (o) => o.deeplinkMiniApp },
+  { label: '🔗 QR code URL (gốc)', get: (o) => o.qrCodeUrl },
 ]
 
 function OrderDetail({ order }) {
@@ -122,18 +143,30 @@ function OrderDetail({ order }) {
         ))}
       </div>
 
-      {order.payUrl && (
-        <a
-          href={order.payUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-block mt-3 text-xs text-momo hover:underline break-all"
-        >
-          🔗 Link thanh toán MoMo
-        </a>
+      {order.qrCodeImage && (
+        <img
+          src={order.qrCodeImage}
+          alt="QR MoMo"
+          className="mt-3 w-28 h-28 rounded-lg border border-stone-200 bg-white p-1"
+        />
       )}
 
-      <div className="mt-2">
+      <div className="mt-2 flex flex-col gap-1.5">
+        {DETAIL_LINKS
+          .map(({ label, get }) => ({ label, url: get(order) }))
+          .filter(({ url }) => !!url)
+          .map(({ label, url }) => (
+            <a
+              key={label}
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block text-xs text-momo hover:underline break-all"
+            >
+              {label}
+            </a>
+          ))}
+
         <a
           href={`/thanh-toan?orderId=${encodeURIComponent(order.orderId)}`}
           target="_blank"
@@ -291,6 +324,26 @@ export default function QuanLyGiaoDich() {
 
   const pendingOrders = orders.filter((o) => o.status === 'PENDING')
 
+  // Phạm vi cho khối thống kê: theo tìm kiếm + bộ lọc thời gian, KHÔNG
+  // theo bộ lọc trạng thái — để luôn thấy đủ bức tranh (bao nhiêu đơn mỗi
+  // trạng thái) dù đang chỉ xem 1 trạng thái trong bảng bên dưới.
+  const statsScopeOrders = orders.filter((o) => {
+    if (searchQuery) return o.orderId.toLowerCase().includes(searchQuery)
+    return matchesDateFilter(o, dateFilter)
+  })
+  const stats = statsScopeOrders.reduce(
+    (acc, o) => {
+      acc.total += 1
+      if (o.status === 'PAID') {
+        acc.paidCount += 1
+        acc.revenue += Number(o.amount) || 0
+      } else if (o.status === 'PENDING') acc.pendingCount += 1
+      else if (o.status === 'FAILED') acc.failedCount += 1
+      return acc
+    },
+    { total: 0, paidCount: 0, pendingCount: 0, failedCount: 0, revenue: 0 }
+  )
+
   // Tra cứu lại TỪNG đơn đang "Đang chờ" — dùng để cập nhật thủ công
   // phòng trường hợp IPN từ MoMo bị rớt, hệ thống không tự trả kết quả.
   async function handleRefreshPending() {
@@ -392,6 +445,28 @@ export default function QuanLyGiaoDich() {
             </div>
           </div>
 
+          {/* Khối thống kê tổng quan — theo phạm vi tìm kiếm + bộ lọc thời gian
+              hiện tại (không đổi theo bộ lọc trạng thái, xem ghi chú ở statsScopeOrders) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            <div className={`bg-white rounded-2xl px-4 py-3 ${CARD_SHADOW}`}>
+              <p className="text-stone-400 text-xs mb-1">Tổng số đơn</p>
+              <p className="text-xl font-extrabold text-stone-900 tabular-nums">{stats.total}</p>
+            </div>
+            <div className={`bg-white rounded-2xl px-4 py-3 ${CARD_SHADOW}`}>
+              <p className="text-stone-400 text-xs mb-1">Doanh thu (thành công)</p>
+              <p className="text-xl font-extrabold text-emerald-700 tabular-nums">{formatVND(stats.revenue)}</p>
+              <p className="text-stone-400 text-[11px] mt-0.5">{stats.paidCount} đơn</p>
+            </div>
+            <div className={`bg-white rounded-2xl px-4 py-3 ${CARD_SHADOW}`}>
+              <p className="text-stone-400 text-xs mb-1">Đang chờ</p>
+              <p className="text-xl font-extrabold text-amber-700 tabular-nums">{stats.pendingCount}</p>
+            </div>
+            <div className={`bg-white rounded-2xl px-4 py-3 ${CARD_SHADOW}`}>
+              <p className="text-stone-400 text-xs mb-1">Thất bại</p>
+              <p className="text-xl font-extrabold text-rose-700 tabular-nums">{stats.failedCount}</p>
+            </div>
+          </div>
+
           {/* Thanh lọc trạng thái + thời gian — vô hiệu khi đang tìm theo mã đơn */}
           <div className={`flex flex-wrap items-center gap-2 mb-4 ${search ? 'opacity-40 pointer-events-none' : ''}`}>
             <div className="flex gap-1.5 flex-wrap">
@@ -451,9 +526,14 @@ export default function QuanLyGiaoDich() {
                             ▸
                           </span>
                           <span className="min-w-0">
-                            <span className="flex items-center gap-2 mb-0.5">
+                            <span className="flex items-center gap-2 mb-0.5 flex-wrap">
                               <span className="font-mono text-xs text-stone-400 truncate">{o.orderId}</span>
                               <StatusBadge status={o.status} />
+                              {o.type && (
+                                <span className="text-[10px] font-medium text-stone-400 bg-stone-100 rounded px-1.5 py-0.5 shrink-0">
+                                  {TYPE_TEXT[o.type] || o.type}
+                                </span>
+                              )}
                             </span>
                             <span className="block text-xs text-stone-400 truncate">{o.orderInfo}</span>
                           </span>
