@@ -4,17 +4,18 @@
 // - P2P: nhập số tiền + nội dung -> POST /api/momo/create (mode=p2p)
 //   -> mỗi lần tạo thành công đẩy thêm 1 THẺ GIAO DỊCH vào danh sách bên
 //   dưới (không giới hạn số lượng, form luôn sẵn sàng tạo tiếp) — mỗi thẻ
-//   tự có QR thật (qr-extract), chuyển khoản tay (transfer-info), nút
-//   kiểm tra trạng thái, và nút copy link gửi khách / link MoMo gốc.
+//   hiện QR thật để khách quét, đồng hồ đếm ngược 10 phút (khớp
+//   ORDER_EXPIRE_MS ở api/momo/create.js), tự động kiểm tra trạng thái mỗi
+//   5s trong lúc chờ, và link copy gửi khách / link MoMo gốc.
 // - Quét mã khách (POS): nhân viên quét mã QR MoMo của khách (18 số)
 //   -> nhập số tiền -> POST /api/momo/create (mode=scan) -> trừ tiền
-//   trực tiếp từ ví khách.
+//   trực tiếp từ ví khách, có kết quả ngay.
 //
 // Không xử lý đăng nhập ở đây — pages/_app.js đã chặn ở tầng toàn
 // cục. Nếu session hết hạn giữa chừng, route trả 401 -> reload để
 // gate toàn cục bắt lại.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
 const TABS = [
@@ -26,18 +27,51 @@ const STATUS_STYLE = {
   PENDING: 'bg-amber-50 text-amber-700',
   PAID: 'bg-emerald-50 text-emerald-700',
   FAILED: 'bg-red-50 text-red-700',
+  EXPIRED: 'bg-neutral-100 text-neutral-500',
 }
 
 const STATUS_TEXT = {
   PENDING: 'Chờ thanh toán',
   PAID: 'Đã thanh toán',
   FAILED: 'Thất bại',
+  EXPIRED: 'Hết hạn',
 }
+
+const ORDER_TTL_SECONDS = 10 * 60 // khớp ORDER_EXPIRE_MS ở api/momo/create.js
+const POLL_INTERVAL_MS = 5000
+const POLL_GRACE_MS = 2 * 60 * 1000 // vẫn dò thêm 2 phút sau khi hết hạn, phòng IPN tới trễ
 
 function formatVND(n) {
   const num = Number(n)
   if (Number.isNaN(num)) return n
   return num.toLocaleString('vi-VN') + ' đ'
+}
+
+function formatCountdown(sec) {
+  const s = Math.max(0, sec)
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}:${String(r).padStart(2, '0')}`
+}
+
+// Đếm ngược tới `expiresAt` (ISO string), cập nhật mỗi giây.
+// Trả về { secondsLeft, isExpired } — secondsLeft luôn >= 0.
+function useCountdown(expiresAt) {
+  const getRemaining = () => {
+    if (!expiresAt) return ORDER_TTL_SECONDS
+    return Math.round((new Date(expiresAt).getTime() - Date.now()) / 1000)
+  }
+  const [secondsLeft, setSecondsLeft] = useState(getRemaining)
+
+  useEffect(() => {
+    if (!expiresAt) return
+    setSecondsLeft(getRemaining())
+    const id = setInterval(() => setSecondsLeft(getRemaining()), 1000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expiresAt])
+
+  return { secondsLeft: Math.max(0, secondsLeft), isExpired: secondsLeft <= 0 }
 }
 
 function CopyField({ label, value }) {
@@ -69,16 +103,53 @@ function CopyField({ label, value }) {
   )
 }
 
+// Vòng tròn đếm ngược nhỏ, đặt góc thẻ. Màu chuyển momo -> vàng -> đỏ khi
+// gần hết hạn, để admin liếc mắt là biết đơn nào sắp hết hạn mà chưa quét.
+function CountdownRing({ secondsLeft, isExpired }) {
+  const R = 15
+  const C = 2 * Math.PI * R
+  const pct = isExpired ? 0 : Math.max(0, Math.min(1, secondsLeft / ORDER_TTL_SECONDS))
+  const color = isExpired
+    ? '#D4D4D4'
+    : secondsLeft <= 60
+    ? '#DC2626'
+    : secondsLeft <= 180
+    ? '#D97706'
+    : 'var(--momo-ring, #A50064)'
+
+  return (
+    <div className="relative w-10 h-10 shrink-0">
+      <svg viewBox="0 0 36 36" className="w-10 h-10 -rotate-90">
+        <circle cx="18" cy="18" r={R} fill="none" stroke="#F1F1F1" strokeWidth="3" />
+        <circle
+          cx="18" cy="18" r={R} fill="none"
+          stroke={color} strokeWidth="3" strokeLinecap="round"
+          strokeDasharray={C}
+          strokeDashoffset={C * (1 - pct)}
+          style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.3s' }}
+        />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-mono font-semibold text-neutral-700">
+        {isExpired ? '⏱' : formatCountdown(secondsLeft)}
+      </span>
+    </div>
+  )
+}
+
 // ─── 1 THẺ GIAO DỊCH VỪA TẠO ────────────────────────────────────────────
 // Tự quản lý trạng thái riêng (không phụ thuộc các thẻ khác) — cho phép
 // admin tạo nhiều giao dịch liên tiếp mà mỗi thẻ vẫn hoạt động độc lập.
-// Không hiện mã QR ở đây — chỉ hiện 2 link (trang thanh toán / link MoMo
-// gốc) để gửi khách. Nút "Kiểm tra giao dịch" dùng để tra cứu thủ công
-// phòng trường hợp IPN từ MoMo bị rớt, không tự trả kết quả.
+// Hiện QR thật để khách quét trực tiếp từ màn hình, kèm 2 link dự phòng
+// (trang thanh toán / link MoMo gốc) để gửi khách nếu cần thao tác trên
+// máy khách. Tự động dò trạng thái mỗi 5s trong lúc còn hạn (và thêm ít
+// phút sau khi hết hạn phòng IPN tới trễ) — nút "Kiểm tra ngay" chỉ để
+// admin chủ động dò thêm khi cần.
 function TransactionCard({ tx, onRemove }) {
   const [status, setStatus] = useState('PENDING')
   const [checking, setChecking] = useState(false)
   const [checkedOnce, setCheckedOnce] = useState(false)
+  const { secondsLeft, isExpired } = useCountdown(tx.expiresAt)
+  const expiredAtRef = useRef(null)
 
   const thanhToanUrl =
     typeof window !== 'undefined'
@@ -102,6 +173,23 @@ function TransactionCard({ tx, onRemove }) {
     }
   }
 
+  // Tự động dò trạng thái trong lúc chờ khách quét, dừng ngay khi có kết
+  // quả cuối (PAID/FAILED). Hết hạn rồi vẫn dò thêm 2 phút phòng trường
+  // hợp khách bấm thanh toán sát giờ / IPN tới trễ, sau đó ngưng hẳn.
+  useEffect(() => {
+    if (status !== 'PENDING') return
+    if (isExpired) {
+      if (!expiredAtRef.current) expiredAtRef.current = Date.now()
+      if (Date.now() - expiredAtRef.current > POLL_GRACE_MS) return
+    }
+    const id = setInterval(handleCheck, POLL_INTERVAL_MS)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, isExpired])
+
+  const displayStatus = status === 'PENDING' && isExpired ? 'EXPIRED' : status
+  const showPayInfo = status === 'PENDING' && !isExpired
+
   return (
     <div className="bg-white rounded-2xl border border-neutral-200 p-5 relative">
       <button
@@ -112,18 +200,34 @@ function TransactionCard({ tx, onRemove }) {
         ✕
       </button>
 
-      <div className="flex items-center gap-2 mb-3">
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLE[status] || 'bg-neutral-100 text-neutral-600'}`}>
-          {STATUS_TEXT[status] || status}
-        </span>
-        <span className="font-mono text-xs text-neutral-400 truncate">{tx.orderId}</span>
+      <div className="flex items-center justify-between gap-2 mb-4 pr-6">
+        <div className="min-w-0">
+          <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLE[displayStatus] || 'bg-neutral-100 text-neutral-600'}`}>
+            {STATUS_TEXT[displayStatus] || displayStatus}
+          </span>
+          <span className="block font-mono text-[11px] text-neutral-400 truncate mt-1">{tx.orderId}</span>
+        </div>
+        {status === 'PENDING' && <CountdownRing secondsLeft={secondsLeft} isExpired={isExpired} />}
       </div>
+
+      {/* QR thật để khách quét ngay trên màn hình — chỉ hiện khi còn hạn */}
+      {showPayInfo && tx.qrCodeImage && (
+        <a
+          href={tx.payUrl || '#'}
+          target="_blank"
+          rel="noreferrer"
+          className="block mx-auto mb-4 w-44 h-44 rounded-xl border border-neutral-200 p-2 hover:border-momo/40 transition"
+          title="Mở link thanh toán MoMo"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={tx.qrCodeImage} alt={`Mã QR thanh toán ${tx.orderId}`} className="w-full h-full object-contain" />
+        </a>
+      )}
 
       <p className="text-2xl font-extrabold font-mono text-neutral-900 mb-4 text-center">
         {formatVND(tx.amount)}
       </p>
 
-      {/* Thông báo kết quả — chỉ hiện sau khi đã bấm tra cứu ít nhất 1 lần */}
       {checkedOnce && status === 'PAID' && (
         <p className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mb-3 text-center font-semibold">
           ✓ Giao dịch thành công
@@ -134,8 +238,13 @@ function TransactionCard({ tx, onRemove }) {
           ✕ Giao dịch thất bại
         </p>
       )}
+      {status === 'PENDING' && isExpired && (
+        <p className="text-sm text-neutral-500 bg-neutral-50 rounded-lg px-3 py-2 mb-3 text-center">
+          Đã quá 10 phút — nếu khách vừa thanh toán, bấm kiểm tra lại bên dưới.
+        </p>
+      )}
 
-      {status === 'PENDING' && (
+      {showPayInfo && (
         <div className="flex flex-col gap-2 mb-3">
           <CopyField label="Link thanh toán gửi khách" value={thanhToanUrl} />
           {tx.payUrl && <CopyField label="Link thanh toán MoMo" value={tx.payUrl} />}
@@ -147,20 +256,35 @@ function TransactionCard({ tx, onRemove }) {
         disabled={checking}
         className="w-full py-2.5 rounded-xl bg-momo text-white text-xs font-semibold hover:bg-momo-dark transition disabled:opacity-50"
       >
-        {checking ? 'Đang kiểm tra...' : 'Kiểm tra giao dịch'}
+        {checking ? 'Đang kiểm tra...' : 'Kiểm tra ngay'}
       </button>
     </div>
   )
 }
 
-function P2PForm() {
-  const [amount, setAmount] = useState('')
-  const [orderInfo, setOrderInfo] = useState('')
-  const [storeId, setStoreId] = useState('')
+function StoreSelect({ stores, storeId, setStoreId }) {
+  if (stores.length <= 1) return null
+  return (
+    <>
+      <label className="block text-sm font-medium text-neutral-700 mb-1">Cửa hàng</label>
+      <select
+        value={storeId}
+        onChange={(e) => setStoreId(e.target.value)}
+        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+      >
+        {stores.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}{s.default ? ' (mặc định)' : ''}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+}
+
+function useStores() {
   const [stores, setStores] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [transactions, setTransactions] = useState([]) // cộng dồn, không giới hạn
+  const [storeId, setStoreId] = useState('')
 
   useEffect(() => {
     fetch('/api/momo/stores', { credentials: 'include' })
@@ -172,7 +296,20 @@ function P2PForm() {
         if (def) setStoreId(def.id)
       })
       .catch(() => {})
+  }, [])
 
+  return { stores, storeId, setStoreId }
+}
+
+function P2PForm() {
+  const [amount, setAmount] = useState('')
+  const [orderInfo, setOrderInfo] = useState('')
+  const { stores, storeId, setStoreId } = useStores()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [transactions, setTransactions] = useState([]) // cộng dồn, không giới hạn
+
+  useEffect(() => {
     // Warm sẵn browser Puppeteer dùng để trích QR thật — đỡ chờ cold-start
     fetch('/api/momo/qr-extract?warm=1').catch(() => {})
   }, [])
@@ -201,7 +338,13 @@ function P2PForm() {
       // Thêm THẺ MỚI vào đầu danh sách, KHÔNG xóa các thẻ trước đó và
       // KHÔNG giới hạn số lượng — form vẫn trống sẵn để tạo tiếp ngay.
       setTransactions((cur) => [
-        { orderId: data.orderId, amount: Number(amount), payUrl: data.payUrl },
+        {
+          orderId: data.orderId,
+          amount: Number(amount),
+          payUrl: data.payUrl,
+          qrCodeImage: data.qrCodeImage,
+          expiresAt: data.expiresAt,
+        },
         ...cur,
       ])
       setAmount('')
@@ -220,22 +363,7 @@ function P2PForm() {
   return (
     <div className="flex flex-col gap-6">
       <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-neutral-200 p-6 max-w-sm w-full mx-auto">
-        {stores.length > 1 && (
-          <>
-            <label className="block text-sm font-medium text-neutral-700 mb-1">Cửa hàng</label>
-            <select
-              value={storeId}
-              onChange={(e) => setStoreId(e.target.value)}
-              className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}{s.default ? ' (mặc định)' : ''}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
+        <StoreSelect stores={stores} storeId={storeId} setStoreId={setStoreId} />
 
         <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
         <input
@@ -267,6 +395,7 @@ function P2PForm() {
         >
           {loading ? 'Đang tạo...' : 'Tạo mã QR'}
         </button>
+        <p className="text-[11px] text-neutral-400 text-center mt-3">Mỗi mã QR có hạn 10 phút kể từ lúc tạo</p>
       </form>
 
       {transactions.length > 0 && (
@@ -285,23 +414,10 @@ function P2PForm() {
 function ScanForm() {
   const [amount, setAmount] = useState('')
   const [code, setCode] = useState('')
-  const [storeId, setStoreId] = useState('')
-  const [stores, setStores] = useState([])
+  const { stores, storeId, setStoreId } = useStores()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
-
-  useEffect(() => {
-    fetch('/api/momo/stores', { credentials: 'include' })
-      .then((res) => (res.ok ? res.json() : { stores: [] }))
-      .then((data) => {
-        const list = data.stores || []
-        setStores(list)
-        const def = list.find((s) => s.default)
-        if (def) setStoreId(def.id)
-      })
-      .catch(() => {})
-  }, [])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -343,22 +459,7 @@ function ScanForm() {
   return (
     <div className="bg-white rounded-2xl border border-neutral-200 p-6">
       <form onSubmit={handleSubmit}>
-        {stores.length > 1 && (
-          <>
-            <label className="block text-sm font-medium text-neutral-700 mb-1">Cửa hàng</label>
-            <select
-              value={storeId}
-              onChange={(e) => setStoreId(e.target.value)}
-              className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}{s.default ? ' (mặc định)' : ''}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
+        <StoreSelect stores={stores} storeId={storeId} setStoreId={setStoreId} />
 
         <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
         <input

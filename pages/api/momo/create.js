@@ -159,6 +159,7 @@ async function handleP2P(params, res) {
     return res.status(200).json({
       payUrl: result.payUrl, deeplink: result.deeplink, qrCodeUrl: result.qrCodeUrl,
       qrCodeImage, orderId: result.orderId, requestId: result.requestId, storeId, storeName,
+      expiresAt,
     })
   } catch (err) {
     console.error('[create][p2p] error:', err)
