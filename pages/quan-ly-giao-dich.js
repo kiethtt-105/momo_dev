@@ -205,6 +205,7 @@ export default function QuanLyGiaoDich() {
   const [statusFilter, setStatusFilter] = useState('PAID') // mặc định: đã thanh toán
   const [dateFilter, setDateFilter] = useState('today') // mặc định: hôm nay
   const [loading, setLoading] = useState(false)
+  const [refreshingPending, setRefreshingPending] = useState(false)
   const [actionId, setActionId] = useState('') // orderId đang xử lý cancel/delete
   const [expandedId, setExpandedId] = useState('') // orderId đang mở rộng chi tiết
 
@@ -275,6 +276,38 @@ export default function QuanLyGiaoDich() {
     return true
   })
 
+  const pendingOrders = orders.filter((o) => o.status === 'PENDING')
+
+  // Tra cứu lại TỪNG đơn đang "Chờ thanh toán" — dùng để cập nhật thủ công
+  // phòng trường hợp IPN từ MoMo bị rớt, hệ thống không tự trả kết quả.
+  async function handleRefreshPending() {
+    if (pendingOrders.length === 0 || refreshingPending) return
+    setRefreshingPending(true)
+    try {
+      const results = await Promise.all(
+        pendingOrders.map(async ({ orderId }) => {
+          try {
+            const res = await fetch(`/api/momo/orders?orderId=${encodeURIComponent(orderId)}`, {
+              credentials: 'include',
+            })
+            const data = await res.json()
+            return (data.orders || []).find((o) => o.orderId === orderId) || null
+          } catch {
+            return null
+          }
+        })
+      )
+      setOrders((cur) =>
+        cur.map((o) => {
+          const updated = results.find((r) => r && r.orderId === o.orderId)
+          return updated ? { ...o, ...updated } : o
+        })
+      )
+    } finally {
+      setRefreshingPending(false)
+    }
+  }
+
   if (authed === null) {
     return <main className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Đang tải...</main>
   }
@@ -312,6 +345,15 @@ export default function QuanLyGiaoDich() {
                 </button>
               )}
             </div>
+            <button
+              onClick={handleRefreshPending}
+              disabled={pendingOrders.length === 0 || refreshingPending}
+              className="px-4 py-2 rounded-xl bg-white border border-neutral-200 text-neutral-700 text-sm font-semibold hover:bg-neutral-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {refreshingPending
+                ? '⟳ Đang cập nhật...'
+                : `⟳ Cập nhật trạng thái${pendingOrders.length > 0 ? ` (${pendingOrders.length} đang chờ)` : ''}`}
+            </button>
             <a
               href="/tao-giao-dich"
               target="_blank"
