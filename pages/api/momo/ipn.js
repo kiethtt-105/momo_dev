@@ -14,6 +14,8 @@ export default async function handler(req, res) {
   }
 
   const body = req.body
+  console.log('[MoMo IPN] Body nhận được:', JSON.stringify(body))   // ← thêm dòng này
+
   if (!verifyIpnSignature(body)) {
     console.error('[MoMo IPN] Invalid signature!')
     return res.status(400).json({ message: 'Invalid signature' })

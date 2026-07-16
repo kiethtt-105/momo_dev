@@ -4,12 +4,18 @@
 // - P2P: bố cục 2 cột — cột trái là form nhập số tiền + nội dung
 //   (POST /api/momo/create, mode=p2p), cột phải là danh sách "Đơn hàng
 //   đang mở" xếp dọc xuống, mỗi đơn 1 dòng gọn (không giới hạn số
-//   lượng, form bên trái luôn sẵn sàng tạo tiếp ngay). Không hiển thị
-//   ảnh QR nữa — link thanh toán đã đủ chức năng: bấm trực tiếp vào
-//   dòng link sẽ MỞ link đó (tab mới), nút "Chép" riêng bên cạnh mới
-//   copy văn bản. Mỗi đơn có đồng hồ đếm ngược 10 phút (khớp
-//   ORDER_EXPIRE_MS ở api/momo/create.js) và tự động kiểm tra trạng
-//   thái mỗi 5s trong lúc chờ.
+//   lượng, form bên trái luôn sẵn sàng tạo tiếp ngay). Mỗi đơn hiện mã
+//   QR thanh toán; 2 link (trang thanh toán / link MoMo gốc) KHÔNG hiện
+//   dạng plain text nữa — chỉ có biểu tượng liên kết (mở tab mới) và
+//   biểu tượng copy riêng. Bấm ✕ để hủy đơn sẽ hiện POPUP XÁC NHẬN của
+//   chính trang web (không dùng confirm()/alert() của trình duyệt),
+//   phải bấm xác nhận mới ẩn đơn khỏi danh sách. Mỗi đơn có đồng hồ đếm
+//   ngược 10 phút (khớp ORDER_EXPIRE_MS ở api/momo/create.js) và tự
+//   động kiểm tra trạng thái mỗi 30s trong lúc chờ (hỏi thẳng MoMo qua
+//   /api/momo/query — KHÔNG chỉ đọc Redis nữa, vì IPN có lúc không tới
+//   nên chỉ đọc Redis sẽ đứng mãi ở PENDING dù khách đã thanh toán
+//   xong). 30s để đỡ tốn quota gọi MoMo; nút "Kiểm tra ngay" vẫn cho
+//   admin chủ động dò bất cứ lúc nào không cần chờ đủ 30s.
 // - Quét mã khách (POS): nhân viên quét mã QR MoMo của khách (18 số)
 //   -> nhập số tiền -> POST /api/momo/create (mode=scan) -> trừ tiền
 //   trực tiếp từ ví khách, có kết quả ngay.
@@ -43,7 +49,7 @@ const STATUS_TEXT = {
 }
 
 const ORDER_TTL_SECONDS = 10 * 60 // khớp ORDER_EXPIRE_MS ở api/momo/create.js
-const POLL_INTERVAL_MS = 5000
+const POLL_INTERVAL_MS = 30000 // hỏi MoMo qua /api/momo/query — 30s để đỡ tốn quota
 const POLL_GRACE_MS = 2 * 60 * 1000 // vẫn dò thêm 2 phút sau khi hết hạn, phòng IPN tới trễ
 
 function formatVND(n) {
@@ -79,14 +85,33 @@ function useCountdown(expiresAt) {
   return { secondsLeft: Math.max(0, secondsLeft), isExpired: secondsLeft <= 0 }
 }
 
-// Dòng hiển thị 1 link: bấm trực tiếp vào dòng sẽ MỞ link (tab mới) —
-// nút "Chép" riêng bên phải mới copy văn bản, không mở link.
-function LinkField({ label, value, href }) {
+// ─── Icon SVG dùng chung (không phụ thuộc thư viện ngoài) ───────────────
+const IconExternalLink = (props) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    <polyline points="15 3 21 3 21 9" />
+    <line x1="10" y1="14" x2="21" y2="3" />
+  </svg>
+)
+const IconCopy = (props) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+)
+const IconCheck = (props) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+)
+
+// Dòng hiển thị 1 link bằng BIỂU TƯỢNG thay vì chuỗi ký tự (không lộ link
+// dạng plain text ra giao diện nữa): biểu tượng liên kết để MỞ link (tab
+// mới), biểu tượng copy riêng để chép văn bản — không mở link.
+function IconLinkRow({ label, value, href }) {
   const [copied, setCopied] = useState(false)
 
-  async function handleCopy(e) {
-    e.preventDefault()
-    e.stopPropagation()
+  async function handleCopy() {
     try {
       await navigator.clipboard.writeText(String(value))
       setCopied(true)
@@ -97,24 +122,67 @@ function LinkField({ label, value, href }) {
   }
 
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="w-full flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-2.5 hover:bg-neutral-50 hover:border-momo/30 transition"
-      title="Bấm để mở link thanh toán"
+    <div className="w-full flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-2">
+      <span className="text-[12px] text-neutral-500 truncate">{label}</span>
+      <div className="flex items-center gap-1 shrink-0">
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          title="Mở liên kết thanh toán"
+          className="w-8 h-8 flex items-center justify-center rounded-lg text-momo hover:bg-momo/10 transition"
+        >
+          <IconExternalLink />
+        </a>
+        <button
+          type="button"
+          onClick={handleCopy}
+          title="Chép liên kết"
+          className={`w-8 h-8 flex items-center justify-center rounded-lg transition ${
+            copied ? 'text-emerald-600 bg-emerald-50' : 'text-neutral-500 hover:bg-neutral-100'
+          }`}
+        >
+          {copied ? <IconCheck /> : <IconCopy />}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Popup xác nhận CỦA TRANG WEB (không phải confirm()/alert() của trình
+// duyệt) — hiện giữa màn hình, có lớp phủ mờ phía sau, bấm ra ngoài hoặc
+// "Hủy" để đóng mà không làm gì.
+function ConfirmModal({ open, title, description, confirmLabel = 'Xác nhận', onConfirm, onCancel }) {
+  if (!open) return null
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      onClick={onCancel}
     >
-      <span className="min-w-0">
-        <span className="block text-[11px] text-neutral-400">{label}</span>
-        <span className="block font-mono text-sm font-semibold text-neutral-900 truncate">{value}</span>
-      </span>
-      <button
-        onClick={handleCopy}
-        className="shrink-0 text-[11px] font-semibold text-momo px-2.5 py-1.5 rounded-lg hover:bg-momo/10 transition"
+      <div
+        className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5"
+        onClick={(e) => e.stopPropagation()}
       >
-        {copied ? 'Đã chép ✓' : 'Chép'}
-      </button>
-    </a>
+        <h3 className="text-base font-bold text-neutral-900 mb-1.5">{title}</h3>
+        {description && <p className="text-sm text-neutral-500 mb-5">{description}</p>}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl border border-neutral-200 text-sm font-semibold text-neutral-600 hover:bg-neutral-50 transition"
+          >
+            Hủy
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -163,6 +231,7 @@ function TransactionRow({ tx, onRemove }) {
   const [status, setStatus] = useState('PENDING')
   const [checking, setChecking] = useState(false)
   const [checkedOnce, setCheckedOnce] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const { secondsLeft, isExpired } = useCountdown(tx.expiresAt)
   const expiredAtRef = useRef(null)
 
@@ -171,16 +240,34 @@ function TransactionRow({ tx, onRemove }) {
       ? `${window.location.origin}/thanh-toan?orderId=${encodeURIComponent(tx.orderId)}`
       : `/thanh-toan?orderId=${encodeURIComponent(tx.orderId)}`
 
+  // Hỏi THẲNG MoMo (server-to-server, qua /api/momo/query) thay vì chỉ
+  // đọc Redis — Redis chỉ được cập nhật khi IPN tới, mà IPN có lúc
+  // không tới nên đơn cứ đứng PENDING mãi dù khách đã thanh toán xong.
+  // Route query.js tự đồng bộ Redis luôn nên lần kiểm tra sau (nếu có)
+  // sẽ thấy trạng thái mới nhất kể cả không gọi lại route này.
   async function handleCheck() {
     setChecking(true)
     try {
-      const res = await fetch(`/api/momo/orders?orderId=${encodeURIComponent(tx.orderId)}`, {
+      const res = await fetch(`/api/momo/query?orderId=${encodeURIComponent(tx.orderId)}`, {
         credentials: 'include',
       })
+      if (res.status === 401) {
+        window.location.reload()
+        return
+      }
       const data = await res.json()
-      const found = (data.orders || []).find((o) => o.orderId === tx.orderId)
-      if (found) setStatus(found.status)
-      setCheckedOnce(true)
+      if (res.ok) {
+        if (data.orderStatus) {
+          // Route đã đồng bộ Redis xong — dùng thẳng trạng thái cuối này
+          setStatus(data.orderStatus)
+        } else if (data.isPaid) {
+          setStatus('PAID')
+        } else if (!data.isStillPending) {
+          setStatus('FAILED')
+        }
+        // isStillPending=true (MoMo báo đang xử lý) -> giữ nguyên PENDING
+        setCheckedOnce(true)
+      }
     } catch {
       /* giữ nguyên trạng thái cũ nếu lỗi mạng */
     } finally {
@@ -208,12 +295,24 @@ function TransactionRow({ tx, onRemove }) {
   return (
     <div className="bg-white rounded-2xl border border-neutral-200 p-4 relative">
       <button
-        onClick={() => onRemove(tx.orderId)}
+        onClick={() => setConfirmRemove(true)}
         className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
-        title="Ẩn khỏi danh sách"
+        title="Hủy đơn"
       >
         ✕
       </button>
+
+      <ConfirmModal
+        open={confirmRemove}
+        title="Hủy đơn hàng này?"
+        description="Đơn sẽ được ẩn khỏi danh sách trên màn hình này. Nếu khách đã thanh toán, giao dịch vẫn được ghi nhận bình thường."
+        confirmLabel="Hủy đơn"
+        onCancel={() => setConfirmRemove(false)}
+        onConfirm={() => {
+          setConfirmRemove(false)
+          onRemove(tx.orderId)
+        }}
+      />
 
       <div className="flex items-center gap-3 pr-6">
         {status === 'PENDING' ? (
@@ -253,18 +352,28 @@ function TransactionRow({ tx, onRemove }) {
       )}
 
       {showPayInfo && (
-        <div className="flex flex-col gap-2 mt-3">
-          <LinkField label="Link thanh toán gửi khách" value={thanhToanUrl} href={thanhToanUrl} />
-          {tx.payUrl && <LinkField label="Link thanh toán MoMo" value={tx.payUrl} href={tx.payUrl} />}
+        <div className="flex flex-col items-center gap-3 mt-3">
+          {tx.qrCodeImage && (
+            <img
+              src={tx.qrCodeImage}
+              alt="Mã QR thanh toán"
+              className="w-40 h-40 rounded-xl border border-neutral-200 object-contain bg-white"
+            />
+          )}
+          <div className="w-full flex flex-col gap-2">
+            <IconLinkRow label="Link thanh toán gửi khách" value={thanhToanUrl} href={thanhToanUrl} />
+            {tx.payUrl && <IconLinkRow label="Link thanh toán MoMo" value={tx.payUrl} href={tx.payUrl} />}
+          </div>
         </div>
       )}
 
       <button
         onClick={handleCheck}
         disabled={checking}
+        title="Hỏi trực tiếp MoMo, không chờ webhook"
         className="w-full py-2.5 rounded-xl bg-momo text-white text-xs font-semibold hover:bg-momo-dark transition disabled:opacity-50 mt-3"
       >
-        {checking ? 'Đang kiểm tra...' : 'Kiểm tra ngay'}
+        {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
       </button>
     </div>
   )
