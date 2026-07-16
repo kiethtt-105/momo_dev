@@ -16,9 +16,10 @@
 //   - Khách (trang /thanh-toan, không đăng nhập): PHẢI kèm ?token=xxx do
 //     /api/momo/guest-check-token cấp riêng cho ĐÚNG orderId này — token
 //     dùng 1 lần, hết hạn rất nhanh, không dùng lại được và không dùng
-//     được cho đơn khác. Khách chỉ nhận về vài field tối thiểu để cập
-//     nhật giao diện (isPaid/isStillPending/orderStatus) — KHÔNG lộ
-//     transId, amount, payType, promotionInfo... như phía admin.
+//     được cho đơn khác. Khách nhận về field cần cho giao diện thanh toán
+//     (isPaid/isStillPending/orderStatus/orderInfo/amount/paidAt/transId/
+//     storeName/aio_qr) — vẫn KHÔNG lộ payType, promotionInfo,
+//     partnerCode, requestId... như phía admin.
 
 import { queryMoMoTransaction } from '../../../lib/momo'
 import { getOrder, saveOrder } from '../../../lib/orders'
@@ -82,13 +83,14 @@ export default async function handler(req, res) {
 
     const prev = prevForGuest || await getOrder(orderId)
     let syncedStatus = prev?.status || null
+    let record = null
 
     // Chỉ ghi đè Redis khi có kết quả DỨT KHOÁT (thành công hoặc thất bại
     // thật sự) — tránh việc query lúc MoMo chưa xử lý xong lại vô tình
     // đánh dấu FAILED oan cho 1 đơn thực ra vẫn đang chạy.
     if (prev && prev.status !== 'PAID' && !isStillPending) {
       const now = new Date().toISOString()
-      const record = {
+      record = {
         ...prev,
         transId: data.transId?.toString() || prev.transId || '',
         resultCode,
@@ -105,13 +107,22 @@ export default async function handler(req, res) {
     }
 
     if (!isAdmin) {
-      // Khách: CHỈ trả field tối thiểu để cập nhật giao diện — không lộ
-      // transId, amount, payType, promotionInfo, partnerCode, requestId...
+      // Khách: trả field tối thiểu để cập nhật giao diện + các field mở
+      // rộng cho trang /thanh-toan (orderInfo, amount, paidAt, transId,
+      // storeName, aio_qr). Vẫn KHÔNG lộ payType, promotionInfo,
+      // partnerCode, requestId... — những field nội bộ không cần cho FE.
+      const orderData = record || prev
       return res.status(200).json({
         orderId,
         isPaid,
         isStillPending,
         orderStatus: syncedStatus,
+        orderInfo: orderData?.orderInfo ?? null,
+        amount: orderData?.amount ?? data.amount ?? null,
+        paidAt: orderData?.paidAt ?? null,
+        transId: data.transId?.toString() || orderData?.transId || null,
+        storeName: orderData?.storeName ?? null,
+        aio_qr: orderData?.aio_qr ?? null,
       })
     }
 

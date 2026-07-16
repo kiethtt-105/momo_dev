@@ -117,11 +117,13 @@ async function fetchImageAsDataUrl(url, signal) {
   })
 }
 
-// Spinner xoay tròn dùng chung cho các trạng thái đang tải
+// Spinner xoay tròn dùng chung cho các trạng thái đang tải — có track mờ phía
+// sau (giống iOS/Material) để không bị trống trơn 1 nét viền, quay nhanh và
+// mượt hơn animate-spin mặc định (0.7s thay vì 1s, easing riêng thay vì linear).
 function Spinner({ className = '' }) {
   return (
     <span
-      className={`inline-block w-5 h-5 rounded-full border-2 border-stone-200 border-t-momo animate-spin ${className}`}
+      className={`inline-block rounded-full border-2 border-stone-200/60 border-t-momo animate-spin [animation-duration:0.7s] [animation-timing-function:cubic-bezier(0.4,0,0.2,1)] ${className}`}
       aria-hidden="true"
     />
   )
@@ -189,14 +191,19 @@ function CopyField({ label, value }) {
   return (
     <button
       onClick={handleCopy}
-      className={`w-full flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 text-left hover:bg-stone-50 active:scale-[0.99] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30 ${CARD_SHADOW}`}
+      aria-label={`Chép ${label}`}
+      className={`w-full flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 text-left hover:bg-stone-50 hover:-translate-y-px active:scale-[0.98] active:translate-y-0 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30 ${CARD_SHADOW}`}
     >
       <span className="min-w-0">
         <span className="block text-[11px] font-medium uppercase tracking-wide text-stone-400 mb-0.5">{label}</span>
         <span className="block font-mono font-semibold text-stone-900 truncate">{value}</span>
       </span>
-      <span className={`shrink-0 text-xs font-semibold px-2 py-1 rounded-lg transition ${copied ? 'text-emerald-700 bg-emerald-50' : 'text-momo bg-momo/5'}`}>
-        {copied ? 'Đã chép ✓' : 'Chép'}
+      <span className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-200 ease-out ${copied ? 'text-emerald-700 bg-emerald-50' : 'text-momo bg-momo/5'}`}>
+        {copied ? (
+          <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-8 8a1 1 0 01-1.4 0l-4-4a1 1 0 111.4-1.4L8 12.6l7.3-7.3a1 1 0 011.4 0z" clipRule="evenodd" /></svg>
+        ) : (
+          <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M7 3.5A1.5 1.5 0 018.5 2h5A1.5 1.5 0 0115 3.5v9a1.5 1.5 0 01-1.5 1.5h-5A1.5 1.5 0 017 12.5v-9z" /><path d="M4 6.5A1.5 1.5 0 015.5 5H6v9.5A2.5 2.5 0 008.5 17H13v.5A1.5 1.5 0 0111.5 19h-6A1.5 1.5 0 014 17.5v-11z" /></svg>
+        )}
       </span>
     </button>
   )
@@ -219,7 +226,7 @@ function InlineCopy({ value }) {
     <button
       onClick={handleCopy}
       aria-label="Chép mã đơn"
-      className="shrink-0 text-stone-300 hover:text-momo transition focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30 rounded"
+      className="shrink-0 text-stone-300 hover:text-momo hover:scale-110 active:scale-95 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30 rounded"
     >
       {copied ? (
         <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-500"><path fillRule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-8 8a1 1 0 01-1.4 0l-4-4a1 1 0 111.4-1.4L8 12.6l7.3-7.3a1 1 0 011.4 0z" clipRule="evenodd" /></svg>
@@ -623,8 +630,16 @@ export default function ThanhToan() {
               <div className="relative w-14 h-14 rounded-full bg-emerald-500/15 mx-auto mb-4 flex items-center justify-center text-2xl text-emerald-400">✓</div>
               <h1 className="relative text-xl font-extrabold text-white mb-1">Thanh toán thành công</h1>
               <p className="relative text-3xl font-extrabold text-white tabular-nums mt-3">{formatVND(order.amount)}</p>
+              {order.paidAt && (
+                <p className="relative text-stone-400 text-xs mt-2">Lúc {formatTime(order.paidAt)}</p>
+              )}
               <p className="relative text-stone-400 text-xs mt-3">Cảm ơn bạn đã thanh toán. Cửa hàng đã nhận được thông báo.</p>
             </div>
+            {order.transId && (
+              <div className="mt-3">
+                <CopyField label="Mã giao dịch MoMo" value={order.transId} />
+              </div>
+            )}
             <TrustFooter />
           </div>
         </main>
@@ -671,7 +686,7 @@ export default function ThanhToan() {
               <button
                 onClick={handleManualCheck}
                 disabled={checking}
-                className="w-full py-3 rounded-xl bg-stone-100 text-stone-700 text-sm font-semibold hover:bg-stone-200 transition disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-300"
+                className="w-full py-3 rounded-xl bg-stone-100 text-stone-700 text-sm font-semibold hover:bg-stone-200 active:scale-[0.98] transition-all duration-200 ease-out disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-300"
               >
                 {checking ? 'Đang kiểm tra...' : 'Kiểm tra lại trạng thái'}
               </button>
@@ -749,7 +764,7 @@ export default function ThanhToan() {
                   <button
                     onClick={() => loadQr()}
                     disabled={qrLoading}
-                    className="text-xs font-semibold text-momo bg-momo/5 hover:bg-momo/10 rounded-lg px-3 py-1.5 transition disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30"
+                    className="text-xs font-semibold text-momo bg-momo/5 hover:bg-momo/10 active:scale-95 rounded-lg px-3 py-1.5 transition-all duration-200 ease-out disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30"
                   >
                     {qrLoading ? 'Đang tải lại...' : 'Tải lại mã QR'}
                   </button>
@@ -757,7 +772,10 @@ export default function ThanhToan() {
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center gap-3 py-6 mb-4">
-                  <Skeleton className="w-56 h-56" />
+                  <div className="relative w-56 h-56">
+                    <Skeleton className="w-full h-full" />
+                    <Spinner className="w-8 h-8 border-[3px] absolute inset-0 m-auto" />
+                  </div>
                 </div>
               )}
 
@@ -789,7 +807,7 @@ export default function ThanhToan() {
                   <button
                     onClick={() => loadTransferInfo()}
                     disabled={transferLoading}
-                    className="text-xs font-semibold text-momo bg-momo/5 hover:bg-momo/10 rounded-lg px-3 py-1.5 transition disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30"
+                    className="text-xs font-semibold text-momo bg-momo/5 hover:bg-momo/10 active:scale-95 rounded-lg px-3 py-1.5 transition-all duration-200 ease-out disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30"
                   >
                     {transferLoading ? 'Đang tải lại...' : 'Tải lại thông tin'}
                   </button>
@@ -808,7 +826,7 @@ export default function ThanhToan() {
           <button
             onClick={handleManualCheck}
             disabled={checking}
-            className="w-full py-3.5 rounded-xl bg-momo text-white text-sm font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark active:scale-[0.99] transition disabled:opacity-50 mt-5 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/40"
+            className="w-full py-3.5 rounded-xl bg-momo text-white text-sm font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark hover:shadow-[0_14px_24px_-10px_rgba(165,0,100,0.7)] active:scale-[0.98] transition-all duration-200 ease-out disabled:opacity-50 mt-5 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/40"
           >
             {checking && <Spinner className="w-4 h-4 border-white/40 border-t-white" />}
             {checking ? 'Đang kiểm tra...' : 'Kiểm tra kết quả'}

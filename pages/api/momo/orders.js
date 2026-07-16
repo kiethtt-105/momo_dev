@@ -10,8 +10,20 @@
 //                             danh sách người khác)
 // GET  (không có orderId)  → CHỈ admin mới xem được toàn bộ danh sách
 
-import { listOrders, toPublicOrder } from '../../../lib/orders'
+import { listOrders } from '../../../lib/orders'
 import { verifySession, refreshSession } from '../admin/login'
+
+// Field khách (không session admin) được xem — mở rộng thêm so với trước
+// (orderInfo, amount, paidAt, transId, storeName, aio_qr) để trang
+// /thanh-toan hiển thị đủ thông tin. Vẫn KHÔNG lộ các field nội bộ khác
+// (payType, promotionInfo, partnerCode, requestId, guestCheckToken...).
+const GUEST_FIELDS = ['orderId', 'orderInfo', 'amount', 'status', 'paidAt', 'transId', 'storeName', 'aio_qr']
+
+function toGuestOrder(o) {
+  const out = {}
+  for (const f of GUEST_FIELDS) out[f] = o[f] ?? null
+  return out
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -34,7 +46,7 @@ export default async function handler(req, res) {
     }
 
     if (!isAdmin) {
-      orders = orders.map(toPublicOrder)
+      orders = orders.map(toGuestOrder)
     }
 
     return res.status(200).json({ orders, total: orders.length })
@@ -42,4 +54,4 @@ export default async function handler(req, res) {
     console.error('[orders] Lỗi:', err)
     return res.status(500).json({ error: 'Lỗi máy chủ' })
   }
-}
+} 
