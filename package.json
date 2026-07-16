@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@sparticuz/chromium": "^126.0.0",
+    "@sparticuz/chromium-min": "^149.0.0",
     "@tailwindcss/postcss": "^4.3.2",
     "@upstash/redis": "^1.34.0",
     "install": "^0.13.0",

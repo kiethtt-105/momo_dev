@@ -2,11 +2,13 @@
 //
 // Trang tạo giao dịch, gồm 2 chế độ (tab):
 // - P2P: nhập số tiền + nội dung -> POST /api/momo/create (mode=p2p)
-//   -> hiển thị QR để khách tự quét bằng app MoMo.
+//   -> mỗi lần tạo thành công đẩy thêm 1 THẺ GIAO DỊCH vào danh sách bên
+//   dưới (không giới hạn số lượng, form luôn sẵn sàng tạo tiếp) — mỗi thẻ
+//   tự có QR thật (qr-extract), chuyển khoản tay (transfer-info), nút
+//   kiểm tra trạng thái, và nút copy link gửi khách / link MoMo gốc.
 // - Quét mã khách (POS): nhân viên quét mã QR MoMo của khách (18 số)
 //   -> nhập số tiền -> POST /api/momo/create (mode=scan) -> trừ tiền
-//   trực tiếp từ ví khách. (Trước đây tính năng này nằm ở trang Quản
-//   lý giao dịch, giờ gộp về đây cho đúng luồng "tạo giao dịch".)
+//   trực tiếp từ ví khách.
 //
 // Không xử lý đăng nhập ở đây — pages/_app.js đã chặn ở tầng toàn
 // cục. Nếu session hết hạn giữa chừng, route trả 401 -> reload để
@@ -20,43 +22,133 @@ const TABS = [
   { key: 'scan', label: 'Quét mã khách (POS)' },
 ]
 
-// Tải ảnh QR THẬT (trích từ trang thanh toán MoMo bằng Puppeteer, quét
-// 1 lần là thanh toán được luôn) thay vì QR mã hóa payUrl (phải quét 2
-// lần). Nếu trích lỗi/timeout (Puppeteer cold-start lâu, hoặc trang MoMo
-// đổi cấu trúc DOM) -> fallback về QR-link cũ, kèm cảnh báo.
-function RealQrImage({ orderId, fallback }) {
-  const [status, setStatus] = useState('loading') // loading | ok | failed
-  const src = `/api/momo/qr-extract?orderid=${encodeURIComponent(orderId)}`
+const STATUS_STYLE = {
+  PENDING: 'bg-amber-50 text-amber-700',
+  PAID: 'bg-emerald-50 text-emerald-700',
+  FAILED: 'bg-red-50 text-red-700',
+}
+
+const STATUS_TEXT = {
+  PENDING: 'Chờ thanh toán',
+  PAID: 'Đã thanh toán',
+  FAILED: 'Thất bại',
+}
+
+function formatVND(n) {
+  const num = Number(n)
+  if (Number.isNaN(num)) return n
+  return num.toLocaleString('vi-VN') + ' đ'
+}
+
+function CopyField({ label, value }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(String(value))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* im lặng */
+    }
+  }
 
   return (
-    <div className="mb-4">
-      {status === 'loading' && (
-        <p className="text-sm text-neutral-400 mb-2">Đang lấy mã QR thật, chờ vài giây...</p>
+    <button
+      onClick={handleCopy}
+      className="w-full flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-2.5 text-left hover:bg-neutral-50 transition"
+    >
+      <span className="min-w-0">
+        <span className="block text-[11px] text-neutral-400">{label}</span>
+        <span className="block font-mono text-sm font-semibold text-neutral-900 truncate">{value}</span>
+      </span>
+      <span className="shrink-0 text-[11px] font-semibold text-momo">
+        {copied ? 'Đã chép ✓' : 'Chép'}
+      </span>
+    </button>
+  )
+}
+
+// ─── 1 THẺ GIAO DỊCH VỪA TẠO ────────────────────────────────────────────
+// Tự quản lý trạng thái riêng (không phụ thuộc các thẻ khác) — cho phép
+// admin tạo nhiều giao dịch liên tiếp mà mỗi thẻ vẫn hoạt động độc lập.
+// Không hiện mã QR ở đây — chỉ hiện 2 link (trang thanh toán / link MoMo
+// gốc) để gửi khách. Nút "Kiểm tra giao dịch" dùng để tra cứu thủ công
+// phòng trường hợp IPN từ MoMo bị rớt, không tự trả kết quả.
+function TransactionCard({ tx, onRemove }) {
+  const [status, setStatus] = useState('PENDING')
+  const [checking, setChecking] = useState(false)
+  const [checkedOnce, setCheckedOnce] = useState(false)
+
+  const thanhToanUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/thanh-toan?orderId=${encodeURIComponent(tx.orderId)}`
+      : `/thanh-toan?orderId=${encodeURIComponent(tx.orderId)}`
+
+  async function handleCheck() {
+    setChecking(true)
+    try {
+      const res = await fetch(`/api/momo/orders?orderId=${encodeURIComponent(tx.orderId)}`, {
+        credentials: 'include',
+      })
+      const data = await res.json()
+      const found = (data.orders || []).find((o) => o.orderId === tx.orderId)
+      if (found) setStatus(found.status)
+      setCheckedOnce(true)
+    } catch {
+      /* giữ nguyên trạng thái cũ nếu lỗi mạng */
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-neutral-200 p-5 relative">
+      <button
+        onClick={() => onRemove(tx.orderId)}
+        className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
+        title="Ẩn thẻ này"
+      >
+        ✕
+      </button>
+
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLE[status] || 'bg-neutral-100 text-neutral-600'}`}>
+          {STATUS_TEXT[status] || status}
+        </span>
+        <span className="font-mono text-xs text-neutral-400 truncate">{tx.orderId}</span>
+      </div>
+
+      <p className="text-2xl font-extrabold font-mono text-neutral-900 mb-4 text-center">
+        {formatVND(tx.amount)}
+      </p>
+
+      {/* Thông báo kết quả — chỉ hiện sau khi đã bấm tra cứu ít nhất 1 lần */}
+      {checkedOnce && status === 'PAID' && (
+        <p className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mb-3 text-center font-semibold">
+          ✓ Giao dịch thành công
+        </p>
+      )}
+      {checkedOnce && status === 'FAILED' && (
+        <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3 text-center font-semibold">
+          ✕ Giao dịch thất bại
+        </p>
       )}
 
-      {status !== 'failed' && (
-        <img
-          src={src}
-          alt="Mã QR thanh toán MoMo"
-          className="w-56 h-56 mx-auto rounded-xl border border-neutral-100"
-          style={{ display: status === 'ok' ? 'block' : status === 'loading' ? 'none' : undefined }}
-          onLoad={() => setStatus('ok')}
-          onError={() => setStatus('failed')}
-        />
+      {status === 'PENDING' && (
+        <div className="flex flex-col gap-2 mb-3">
+          <CopyField label="Link thanh toán gửi khách" value={thanhToanUrl} />
+          {tx.payUrl && <CopyField label="Link thanh toán MoMo" value={tx.payUrl} />}
+        </div>
       )}
 
-      {status === 'failed' && fallback && (
-        <>
-          <img
-            src={fallback}
-            alt="Mã QR mở trang thanh toán MoMo"
-            className="w-48 h-48 mx-auto rounded-xl border border-neutral-100 mb-2"
-          />
-          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-2">
-            ⚠ Không lấy được mã QR quét trực tiếp (thử lại hoặc dùng nút bên trên) — mã này chỉ để mở trang thanh toán, cần quét thêm 1 lần nữa trên trang đó.
-          </p>
-        </>
-      )}
+      <button
+        onClick={handleCheck}
+        disabled={checking}
+        className="w-full py-2.5 rounded-xl bg-momo text-white text-xs font-semibold hover:bg-momo-dark transition disabled:opacity-50"
+      >
+        {checking ? 'Đang kiểm tra...' : 'Kiểm tra giao dịch'}
+      </button>
     </div>
   )
 }
@@ -68,7 +160,7 @@ function P2PForm() {
   const [stores, setStores] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [result, setResult] = useState(null)
+  const [transactions, setTransactions] = useState([]) // cộng dồn, không giới hạn
 
   useEffect(() => {
     fetch('/api/momo/stores', { credentials: 'include' })
@@ -82,14 +174,12 @@ function P2PForm() {
       .catch(() => {})
 
     // Warm sẵn browser Puppeteer dùng để trích QR thật — đỡ chờ cold-start
-    // (khởi động Chromium) ngay lúc người dùng bấm "Tạo mã QR".
     fetch('/api/momo/qr-extract?warm=1').catch(() => {})
   }, [])
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    setResult(null)
     setLoading(true)
     try {
       const res = await fetch('/api/momo/create', {
@@ -107,7 +197,15 @@ function P2PForm() {
         setError(data.error || 'Không tạo được giao dịch')
         return
       }
-      setResult(data)
+
+      // Thêm THẺ MỚI vào đầu danh sách, KHÔNG xóa các thẻ trước đó và
+      // KHÔNG giới hạn số lượng — form vẫn trống sẵn để tạo tiếp ngay.
+      setTransactions((cur) => [
+        { orderId: data.orderId, amount: Number(amount), payUrl: data.payUrl },
+        ...cur,
+      ])
+      setAmount('')
+      setOrderInfo('')
     } catch {
       setError('Lỗi kết nối, thử lại sau')
     } finally {
@@ -115,99 +213,72 @@ function P2PForm() {
     }
   }
 
-  function reset() {
-    setResult(null)
-    setAmount('')
-    setOrderInfo('')
-  }
-
-  if (result) {
-    return (
-      <div className="bg-white rounded-2xl border border-neutral-200 p-6 text-center">
-        <p className="text-sm text-neutral-500 mb-1">Số tiền</p>
-        <p className="text-2xl font-extrabold font-mono text-neutral-900 mb-4">
-          {Number(amount).toLocaleString('vi-VN')} đ
-        </p>
-
-        {result.payUrl && (
-          <a
-            href={result.payUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="block w-full py-3 rounded-xl bg-momo text-white text-sm font-semibold hover:bg-momo-dark transition mb-4"
-          >
-            Mở trang thanh toán MoMo
-          </a>
-        )}
-
-        {result.orderId && (
-          <RealQrImage orderId={result.orderId} fallback={result.qrCodeImage} />
-        )}
-
-        <p className="text-xs text-neutral-400 mb-5">
-          Mã đơn: <span className="font-mono">{result.orderId}</span>
-        </p>
-
-        <button
-          onClick={reset}
-          className="w-full py-3 rounded-xl bg-neutral-900 text-white text-sm font-semibold hover:bg-neutral-700 transition"
-        >
-          Tạo giao dịch mới
-        </button>
-      </div>
-    )
+  function handleRemove(orderId) {
+    setTransactions((cur) => cur.filter((t) => t.orderId !== orderId))
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-neutral-200 p-6">
-      {stores.length > 1 && (
-        <>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">Cửa hàng</label>
-          <select
-            value={storeId}
-            onChange={(e) => setStoreId(e.target.value)}
-            className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-          >
-            {stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}{s.default ? ' (mặc định)' : ''}
-              </option>
-            ))}
-          </select>
-        </>
+    <div className="flex flex-col gap-6">
+      <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-neutral-200 p-6 max-w-sm w-full mx-auto">
+        {stores.length > 1 && (
+          <>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">Cửa hàng</label>
+            <select
+              value={storeId}
+              onChange={(e) => setStoreId(e.target.value)}
+              className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.default ? ' (mặc định)' : ''}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
+        <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={1000}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder="Ví dụ: 50000"
+          className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+          required
+        />
+
+        <label className="block text-sm font-medium text-neutral-700 mb-1">Nội dung (tuỳ chọn)</label>
+        <input
+          type="text"
+          value={orderInfo}
+          onChange={(e) => setOrderInfo(e.target.value)}
+          placeholder="Ví dụ: Thanh toán đơn hàng"
+          className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+        />
+
+        {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{error}</p>}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full py-3.5 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition disabled:opacity-50"
+        >
+          {loading ? 'Đang tạo...' : 'Tạo mã QR'}
+        </button>
+      </form>
+
+      {transactions.length > 0 && (
+        <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scroll-px-4 -mx-4 px-4">
+          {transactions.map((tx) => (
+            <div key={tx.orderId} className="shrink-0 w-80 snap-start">
+              <TransactionCard tx={tx} onRemove={handleRemove} />
+            </div>
+          ))}
+        </div>
       )}
-
-      <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
-      <input
-        type="number"
-        inputMode="numeric"
-        min={1000}
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        placeholder="Ví dụ: 50000"
-        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-        required
-      />
-
-      <label className="block text-sm font-medium text-neutral-700 mb-1">Nội dung (tuỳ chọn)</label>
-      <input
-        type="text"
-        value={orderInfo}
-        onChange={(e) => setOrderInfo(e.target.value)}
-        placeholder="Ví dụ: Thanh toán đơn hàng"
-        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-      />
-
-      {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{error}</p>}
-
-      <button
-        type="submit"
-        disabled={loading}
-        className="w-full py-3.5 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition disabled:opacity-50"
-      >
-        {loading ? 'Đang tạo...' : 'Tạo mã QR'}
-      </button>
-    </form>
+    </div>
   )
 }
 
@@ -339,31 +410,39 @@ export default function TaoGiaoDich() {
 
   return (
     <main className="min-h-screen px-4 py-10 bg-neutral-50">
-      <div className="max-w-sm mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-xl font-extrabold text-neutral-900">Tạo giao dịch</h1>
-          <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-800">
-            ← Trang chủ
-          </Link>
+      <div className="max-w-4xl mx-auto">
+        <div className="max-w-sm w-full mx-auto">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-xl font-extrabold text-neutral-900">Tạo giao dịch</h1>
+            <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-800">
+              ← Trang chủ
+            </Link>
+          </div>
+
+          <div className="flex gap-2 mb-4 bg-neutral-100 rounded-xl p-1">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${
+                  tab === t.key
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex gap-2 mb-4 bg-neutral-100 rounded-xl p-1">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${
-                tab === t.key
-                  ? 'bg-white text-neutral-900 shadow-sm'
-                  : 'text-neutral-500 hover:text-neutral-800'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {tab === 'p2p' ? <P2PForm /> : <ScanForm />}
+        {tab === 'p2p' ? (
+          <P2PForm />
+        ) : (
+          <div className="max-w-sm w-full mx-auto">
+            <ScanForm />
+          </div>
+        )}
       </div>
     </main>
   )
