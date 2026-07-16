@@ -12,7 +12,7 @@
 //      tự chuyển khoản thủ công khi không quét được QR
 //
 // Hành vi:
-//   - Mọi dữ liệu (đơn hàng, QR, thông tin chuyển khoản) được lưu vào sessionStorage
+//   - Mọi dữ liệu (đơn hàng, QR, thông tin chuyển khoản) được lưu vào sessionStorageang kiểm tra phiên đăng nhập...
 //     theo orderId. Khi khách F5, dữ liệu cache hiện ra NGAY LẬP TỨC, không phải chờ
 //     tải lại từ đầu — rồi trang mới âm thầm gọi API phía sau để cập nhật nếu có gì đổi.
 //   - Tự động kiểm tra trạng thái giao dịch mỗi 30s, dừng ngay khi có kết quả cuối
