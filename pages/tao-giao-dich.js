@@ -12,7 +12,7 @@
 // cục. Nếu session hết hạn giữa chừng, route trả 401 -> reload để
 // gate toàn cục bắt lại.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 const TABS = [
@@ -20,12 +20,71 @@ const TABS = [
   { key: 'scan', label: 'Quét mã khách (POS)' },
 ]
 
+// Tải ảnh QR THẬT (trích từ trang thanh toán MoMo bằng Puppeteer, quét
+// 1 lần là thanh toán được luôn) thay vì QR mã hóa payUrl (phải quét 2
+// lần). Nếu trích lỗi/timeout (Puppeteer cold-start lâu, hoặc trang MoMo
+// đổi cấu trúc DOM) -> fallback về QR-link cũ, kèm cảnh báo.
+function RealQrImage({ orderId, fallback }) {
+  const [status, setStatus] = useState('loading') // loading | ok | failed
+  const src = `/api/momo/qr-extract?orderid=${encodeURIComponent(orderId)}`
+
+  return (
+    <div className="mb-4">
+      {status === 'loading' && (
+        <p className="text-sm text-neutral-400 mb-2">Đang lấy mã QR thật, chờ vài giây...</p>
+      )}
+
+      {status !== 'failed' && (
+        <img
+          src={src}
+          alt="Mã QR thanh toán MoMo"
+          className="w-56 h-56 mx-auto rounded-xl border border-neutral-100"
+          style={{ display: status === 'ok' ? 'block' : status === 'loading' ? 'none' : undefined }}
+          onLoad={() => setStatus('ok')}
+          onError={() => setStatus('failed')}
+        />
+      )}
+
+      {status === 'failed' && fallback && (
+        <>
+          <img
+            src={fallback}
+            alt="Mã QR mở trang thanh toán MoMo"
+            className="w-48 h-48 mx-auto rounded-xl border border-neutral-100 mb-2"
+          />
+          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-2">
+            ⚠ Không lấy được mã QR quét trực tiếp (thử lại hoặc dùng nút bên trên) — mã này chỉ để mở trang thanh toán, cần quét thêm 1 lần nữa trên trang đó.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 function P2PForm() {
   const [amount, setAmount] = useState('')
   const [orderInfo, setOrderInfo] = useState('')
+  const [storeId, setStoreId] = useState('')
+  const [stores, setStores] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/momo/stores', { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : { stores: [] }))
+      .then((data) => {
+        const list = data.stores || []
+        setStores(list)
+        const def = list.find((s) => s.default)
+        if (def) setStoreId(def.id)
+      })
+      .catch(() => {})
+
+    // Warm sẵn browser Puppeteer dùng để trích QR thật — đỡ chờ cold-start
+    // (khởi động Chromium) ngay lúc người dùng bấm "Tạo mã QR".
+    fetch('/api/momo/qr-extract?warm=1').catch(() => {})
+  }, [])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -37,7 +96,7 @@ function P2PForm() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ mode: 'p2p', amount, orderInfo }),
+        body: JSON.stringify({ mode: 'p2p', amount, orderInfo, storeId }),
       })
       if (res.status === 401) {
         window.location.reload()
@@ -81,17 +140,8 @@ function P2PForm() {
           </a>
         )}
 
-        {result.qrCodeImage && (
-          <>
-            <img
-              src={result.qrCodeImage}
-              alt="Mã QR mở trang thanh toán MoMo"
-              className="w-48 h-48 mx-auto rounded-xl border border-neutral-100 mb-2"
-            />
-            <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-4">
-              ⚠ Mã này chỉ để quét mở trang thanh toán trên điện thoại khác — không phải mã quét thanh toán trực tiếp bằng app ngân hàng/MoMo (do tài khoản merchant chưa được MoMo cấp deeplink thật).
-            </p>
-          </>
+        {result.orderId && (
+          <RealQrImage orderId={result.orderId} fallback={result.qrCodeImage} />
         )}
 
         <p className="text-xs text-neutral-400 mb-5">
@@ -110,6 +160,23 @@ function P2PForm() {
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-neutral-200 p-6">
+      {stores.length > 1 && (
+        <>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">Cửa hàng</label>
+          <select
+            value={storeId}
+            onChange={(e) => setStoreId(e.target.value)}
+            className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+          >
+            {stores.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{s.default ? ' (mặc định)' : ''}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
+
       <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
       <input
         type="number"
@@ -147,9 +214,23 @@ function P2PForm() {
 function ScanForm() {
   const [amount, setAmount] = useState('')
   const [code, setCode] = useState('')
+  const [storeId, setStoreId] = useState('')
+  const [stores, setStores] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/momo/stores', { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : { stores: [] }))
+      .then((data) => {
+        const list = data.stores || []
+        setStores(list)
+        const def = list.find((s) => s.default)
+        if (def) setStoreId(def.id)
+      })
+      .catch(() => {})
+  }, [])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -165,6 +246,7 @@ function ScanForm() {
           mode: 'scan',
           amount,
           paymentCode: code,
+          storeId,
           orderId: `POS${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
         }),
       })
@@ -190,6 +272,23 @@ function ScanForm() {
   return (
     <div className="bg-white rounded-2xl border border-neutral-200 p-6">
       <form onSubmit={handleSubmit}>
+        {stores.length > 1 && (
+          <>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">Cửa hàng</label>
+            <select
+              value={storeId}
+              onChange={(e) => setStoreId(e.target.value)}
+              className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.default ? ' (mặc định)' : ''}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
         <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
         <input
           type="number"

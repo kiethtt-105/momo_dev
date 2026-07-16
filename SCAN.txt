@@ -1,0 +1,10 @@
+curl -X POST https://momo-dev-two.vercel.app/api/momo/create \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: 06f3be427ec622fc1042c295e35814049eee0a1e4122624d7bf06e2c130e2466" \
+  -d '{
+    "mode": "scan",
+    "amount": 1000,
+    "orderInfo": "Thanh toan POS test",
+    "paymentCode": "254824180066229063",
+    "orderId": "POS_TEST_001"
+  }'
