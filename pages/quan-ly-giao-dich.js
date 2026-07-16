@@ -9,19 +9,32 @@
 // Mỗi đơn hàng có nút mở rộng (▸) để xem TOÀN BỘ field admin mới thấy
 // được (session admin trả full record, không phải bản "public" đã lược
 // bớt như route orders.js trả cho khách).
+//
+// Giao diện đã đồng bộ với pages/index.js và pages/thanh-toan.js: nền
+// #FAF7F5, thẻ trắng bo góc lớn dùng chung CARD_SHADOW, bảng màu
+// stone/momo, badge trạng thái dạng chấm tròn, header logo "M".
 
 import { useEffect, useState } from 'react'
+import Head from 'next/head'
 
-const STATUS_STYLE = {
-  PENDING: 'bg-amber-50 text-amber-700',
-  PAID: 'bg-emerald-50 text-emerald-700',
-  FAILED: 'bg-red-50 text-red-700',
+const CARD_SHADOW = 'shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)]'
+
+// Cùng bảng màu + nhãn trạng thái (chấm tròn) với index.js / thanh-toan.js.
+const STATUS_META = {
+  PAID: { label: 'Thành công', dot: 'bg-emerald-500', text: 'text-emerald-700', chip: 'bg-emerald-50' },
+  PENDING: { label: 'Đang chờ', dot: 'bg-amber-500', text: 'text-amber-700', chip: 'bg-amber-50' },
+  FAILED: { label: 'Thất bại', dot: 'bg-rose-500', text: 'text-rose-700', chip: 'bg-rose-50' },
+  EXPIRED: { label: 'Hết hạn', dot: 'bg-stone-400', text: 'text-stone-500', chip: 'bg-stone-100' },
 }
 
-const STATUS_TEXT = {
-  PENDING: 'Chờ thanh toán',
-  PAID: 'Đã thanh toán',
-  FAILED: 'Thất bại',
+function StatusBadge({ status }) {
+  const meta = STATUS_META[status] || STATUS_META.EXPIRED
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${meta.text} shrink-0`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+      {meta.label}
+    </span>
+  )
 }
 
 const TYPE_TEXT = {
@@ -29,12 +42,12 @@ const TYPE_TEXT = {
   scan: 'Quét mã khách (POS)',
 }
 
-// Bộ lọc trạng thái — mặc định chỉ hiện "Đã thanh toán" để tránh rối mắt
+// Bộ lọc trạng thái — mặc định chỉ hiện "Thành công" để tránh rối mắt
 // giữa hàng chục đơn PENDING/FAILED mỗi ngày.
 const STATUS_FILTERS = [
   { value: 'ALL', label: 'Tất cả' },
-  { value: 'PAID', label: 'Đã thanh toán' },
-  { value: 'PENDING', label: 'Chờ thanh toán' },
+  { value: 'PAID', label: 'Thành công' },
+  { value: 'PENDING', label: 'Đang chờ' },
   { value: 'FAILED', label: 'Thất bại' },
 ]
 
@@ -99,12 +112,12 @@ function OrderDetail({ order }) {
     .filter(({ value }) => value !== null && value !== undefined && value !== '')
 
   return (
-    <div className="px-5 pb-4 pt-1 bg-neutral-50 border-t border-neutral-100">
+    <div className="px-5 pb-4 pt-1 bg-stone-50 border-t border-stone-100">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs mt-3">
         {rows.map(({ label, value }) => (
-          <div key={label} className="flex justify-between gap-3 border-b border-neutral-100 py-1.5">
-            <span className="text-neutral-400 shrink-0">{label}</span>
-            <span className="text-neutral-800 font-mono text-right break-all">{value}</span>
+          <div key={label} className="flex justify-between gap-3 border-b border-stone-100 py-1.5">
+            <span className="text-stone-400 shrink-0">{label}</span>
+            <span className="text-stone-800 font-mono text-right break-all">{value}</span>
           </div>
         ))}
       </div>
@@ -125,7 +138,7 @@ function OrderDetail({ order }) {
           href={`/thanh-toan?orderId=${encodeURIComponent(order.orderId)}`}
           target="_blank"
           rel="noreferrer"
-          className="inline-block text-xs text-neutral-500 hover:underline break-all"
+          className="inline-block text-xs text-stone-500 hover:underline break-all"
         >
           🔗 Link trang thanh toán gửi khách
         </a>
@@ -165,13 +178,13 @@ function LoginForm({ onSuccess }) {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-xs bg-white rounded-2xl border border-neutral-200 p-6">
-        <div className="w-12 h-12 rounded-xl bg-momo mx-auto mb-4 flex items-center justify-center text-white font-extrabold">
+    <main className="min-h-screen bg-[#FAF7F5] flex items-center justify-center px-4">
+      <form onSubmit={handleSubmit} className={`w-full max-w-xs bg-white rounded-3xl p-6 ${CARD_SHADOW}`}>
+        <div className="w-12 h-12 rounded-2xl bg-momo mx-auto mb-4 flex items-center justify-center text-white font-extrabold shadow-[0_6px_16px_-6px_rgba(165,0,100,0.55)]">
           M
         </div>
-        <h1 className="text-lg font-bold text-neutral-900 text-center mb-1">Đăng nhập quản trị</h1>
-        <p className="text-neutral-500 text-sm text-center mb-5">Nhập mật khẩu admin để tiếp tục</p>
+        <h1 className="text-lg font-bold text-stone-900 text-center mb-1">Đăng nhập quản trị</h1>
+        <p className="text-stone-500 text-sm text-center mb-5">Nhập mật khẩu admin để tiếp tục</p>
 
         <input
           type="password"
@@ -179,16 +192,16 @@ function LoginForm({ onSuccess }) {
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Mật khẩu"
           autoFocus
-          className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-3 focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+          className="w-full rounded-xl border border-stone-200 px-4 py-3 mb-3 focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
           required
         />
 
-        {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">{error}</p>}
+        {error && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2 mb-3">{error}</p>}
 
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-3 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition disabled:opacity-50"
+          className="w-full py-3 rounded-xl bg-momo text-white font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark transition disabled:opacity-50"
         >
           {loading ? 'Đang kiểm tra...' : 'Đăng nhập'}
         </button>
@@ -278,7 +291,7 @@ export default function QuanLyGiaoDich() {
 
   const pendingOrders = orders.filter((o) => o.status === 'PENDING')
 
-  // Tra cứu lại TỪNG đơn đang "Chờ thanh toán" — dùng để cập nhật thủ công
+  // Tra cứu lại TỪNG đơn đang "Đang chờ" — dùng để cập nhật thủ công
   // phòng trường hợp IPN từ MoMo bị rớt, hệ thống không tự trả kết quả.
   async function handleRefreshPending() {
     if (pendingOrders.length === 0 || refreshingPending) return
@@ -309,7 +322,11 @@ export default function QuanLyGiaoDich() {
   }
 
   if (authed === null) {
-    return <main className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Đang tải...</main>
+    return (
+      <main className="min-h-screen bg-[#FAF7F5] flex items-center justify-center text-stone-400 text-sm">
+        Đang tải...
+      </main>
+    )
   }
 
   if (authed === false) {
@@ -317,153 +334,162 @@ export default function QuanLyGiaoDich() {
   }
 
   return (
-    <main className="min-h-screen px-6 py-8 bg-neutral-50">
-      <div className="w-full">
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-          <div>
-            <h1 className="text-xl font-extrabold text-neutral-900">Quản lý giao dịch</h1>
-            <p className="text-neutral-500 text-sm">
-              {filteredOrders.length}/{orders.length} đơn hàng
-            </p>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <div className="relative">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Tìm theo mã đơn..."
-                className="rounded-xl border border-neutral-200 px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
-              />
-              {search && (
-                <button
-                  onClick={() => setSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 text-xs"
-                  aria-label="Xóa tìm kiếm"
-                >
-                  ✕
-                </button>
-              )}
+    <>
+      <Head>
+        <title>Quản lý giao dịch · Momo Dev</title>
+      </Head>
+      <main className="min-h-screen bg-[#FAF7F5] px-4 sm:px-6 py-8">
+        <div className="w-full max-w-6xl mx-auto">
+          {/* Header — cùng logo thương hiệu với các trang khác */}
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 shrink-0 rounded-2xl bg-momo flex items-center justify-center text-white font-extrabold text-lg shadow-[0_6px_16px_-6px_rgba(165,0,100,0.55)]">
+                M
+              </div>
+              <div>
+                <h1 className="text-lg font-extrabold text-stone-900 leading-tight tracking-tight">Quản lý giao dịch</h1>
+                <p className="text-stone-400 text-xs">
+                  {filteredOrders.length}/{orders.length} đơn hàng
+                </p>
+              </div>
             </div>
-            <button
-              onClick={handleRefreshPending}
-              disabled={pendingOrders.length === 0 || refreshingPending}
-              className="px-4 py-2 rounded-xl bg-white border border-neutral-200 text-neutral-700 text-sm font-semibold hover:bg-neutral-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {refreshingPending
-                ? '⟳ Đang cập nhật...'
-                : `⟳ Cập nhật trạng thái${pendingOrders.length > 0 ? ` (${pendingOrders.length} đang chờ)` : ''}`}
-            </button>
-            <a
-              href="/tao-giao-dich"
-              target="_blank"
-              rel="noreferrer"
-              className="px-4 py-2 rounded-xl bg-momo text-white text-sm font-semibold hover:bg-momo-dark transition"
-            >
-              Giao Dịch Mới
-            </a>
-          </div>
-        </div>
-
-        {/* Thanh lọc trạng thái + thời gian — vô hiệu khi đang tìm theo mã đơn */}
-        <div className={`flex flex-wrap items-center gap-2 mb-4 ${search ? 'opacity-40 pointer-events-none' : ''}`}>
-          <div className="flex gap-1.5 flex-wrap">
-            {STATUS_FILTERS.map((f) => (
+            <div className="flex gap-2 flex-wrap">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Tìm theo mã đơn..."
+                  className={`rounded-xl bg-white px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-momo/40 ${CARD_SHADOW}`}
+                />
+                {search && (
+                  <button
+                    onClick={() => setSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 text-xs"
+                    aria-label="Xóa tìm kiếm"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
               <button
-                key={f.value}
-                onClick={() => setStatusFilter(f.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  statusFilter === f.value
-                    ? 'bg-neutral-900 text-white'
-                    : 'bg-white border border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                }`}
+                onClick={handleRefreshPending}
+                disabled={pendingOrders.length === 0 || refreshingPending}
+                className={`px-4 py-2 rounded-xl bg-white text-stone-700 text-sm font-semibold hover:bg-stone-50 transition disabled:opacity-50 disabled:cursor-not-allowed ${CARD_SHADOW}`}
               >
-                {f.label}
+                {refreshingPending
+                  ? '⟳ Đang cập nhật...'
+                  : `⟳ Cập nhật trạng thái${pendingOrders.length > 0 ? ` (${pendingOrders.length} đang chờ)` : ''}`}
               </button>
-            ))}
-          </div>
-          <span className="w-px h-5 bg-neutral-200 mx-1 hidden sm:block" />
-          <div className="flex gap-1.5 flex-wrap">
-            {DATE_FILTERS.map((f) => (
-              <button
-                key={f.value}
-                onClick={() => setDateFilter(f.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  dateFilter === f.value
-                    ? 'bg-momo text-white'
-                    : 'bg-white border border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                }`}
+              <a
+                href="/tao-giao-dich"
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2 rounded-xl bg-momo text-white text-sm font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark transition"
               >
-                {f.label}
-              </button>
-            ))}
+                Giao Dịch Mới
+              </a>
+            </div>
           </div>
-        </div>
 
-        {loading && <p className="text-neutral-400 text-sm mb-3">Đang tải...</p>}
+          {/* Thanh lọc trạng thái + thời gian — vô hiệu khi đang tìm theo mã đơn */}
+          <div className={`flex flex-wrap items-center gap-2 mb-4 ${search ? 'opacity-40 pointer-events-none' : ''}`}>
+            <div className="flex gap-1.5 flex-wrap">
+              {STATUS_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  onClick={() => setStatusFilter(f.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    statusFilter === f.value
+                      ? 'bg-stone-900 text-white'
+                      : `bg-white text-stone-600 hover:bg-stone-50 ${CARD_SHADOW}`
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <span className="w-px h-5 bg-stone-200 mx-1 hidden sm:block" />
+            <div className="flex gap-1.5 flex-wrap">
+              {DATE_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  onClick={() => setDateFilter(f.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    dateFilter === f.value
+                      ? 'bg-momo text-white'
+                      : `bg-white text-stone-600 hover:bg-stone-50 ${CARD_SHADOW}`
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
-          {filteredOrders.length === 0 && !loading && (
-            <p className="text-center text-neutral-400 text-sm py-10">
-              {orders.length === 0 ? 'Chưa có đơn hàng nào' : 'Không có đơn hàng nào khớp bộ lọc hiện tại'}
-            </p>
-          )}
+          {loading && <p className="text-stone-400 text-sm mb-3">Đang tải...</p>}
 
-          <div className="max-h-[65vh] overflow-y-auto">
-            {filteredOrders.map((o) => {
-              const isExpanded = expandedId === o.orderId
-              return (
-                <div key={o.orderId} className="border-b border-neutral-100 last:border-0">
-                  <div className="flex items-center justify-between gap-3 px-5 py-4">
-                    <button
-                      onClick={() => toggleExpand(o.orderId)}
-                      className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_180px_200px] items-center gap-2 sm:gap-6 min-w-0 text-left flex-1"
-                    >
-                      <span className="flex items-center gap-3 min-w-0">
-                        <span className={`shrink-0 text-neutral-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                          ▸
-                        </span>
-                        <span className="min-w-0">
-                          <span className="flex items-center gap-2 mb-0.5">
-                            <span className="font-mono text-xs text-neutral-400 truncate">{o.orderId}</span>
-                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${STATUS_STYLE[o.status] || 'bg-neutral-100 text-neutral-600'}`}>
-                              {STATUS_TEXT[o.status] || o.status}
-                            </span>
-                          </span>
-                          <span className="block text-xs text-neutral-400 truncate">{o.orderInfo}</span>
-                        </span>
-                      </span>
-                      <span className="hidden sm:block text-xs text-neutral-400 truncate">{formatTime(o.createdAt)}</span>
-                      <span className="font-mono font-bold text-neutral-900 sm:text-right">{formatVND(o.amount)}</span>
-                    </button>
+          <div className={`bg-white rounded-2xl overflow-hidden ${CARD_SHADOW}`}>
+            {filteredOrders.length === 0 && !loading && (
+              <p className="text-center text-stone-400 text-sm py-10">
+                {orders.length === 0 ? 'Chưa có đơn hàng nào' : 'Không có đơn hàng nào khớp bộ lọc hiện tại'}
+              </p>
+            )}
 
-                    <div className="flex gap-2 shrink-0">
-                      {o.status === 'PENDING' && (
-                        <button
-                          onClick={() => handleCancel(o.orderId)}
-                          disabled={actionId === o.orderId}
-                          className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 transition disabled:opacity-50"
-                        >
-                          Hủy
-                        </button>
-                      )}
+            <div className="max-h-[65vh] overflow-y-auto divide-y divide-stone-100">
+              {filteredOrders.map((o) => {
+                const isExpanded = expandedId === o.orderId
+                return (
+                  <div key={o.orderId}>
+                    <div className="flex items-center justify-between gap-3 px-5 py-4">
                       <button
-                        onClick={() => handleDelete(o.orderId)}
-                        disabled={actionId === o.orderId}
-                        className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 transition disabled:opacity-50"
+                        onClick={() => toggleExpand(o.orderId)}
+                        className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_180px_200px] items-center gap-2 sm:gap-6 min-w-0 text-left flex-1"
                       >
-                        Xóa
+                        <span className="flex items-center gap-3 min-w-0">
+                          <span className={`shrink-0 text-stone-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+                            ▸
+                          </span>
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-2 mb-0.5">
+                              <span className="font-mono text-xs text-stone-400 truncate">{o.orderId}</span>
+                              <StatusBadge status={o.status} />
+                            </span>
+                            <span className="block text-xs text-stone-400 truncate">{o.orderInfo}</span>
+                          </span>
+                        </span>
+                        <span className="hidden sm:block text-xs text-stone-400 truncate">{formatTime(o.createdAt)}</span>
+                        <span className="font-mono font-bold text-stone-900 tabular-nums sm:text-right">{formatVND(o.amount)}</span>
                       </button>
-                    </div>
-                  </div>
 
-                  {isExpanded && <OrderDetail order={o} />}
-                </div>
-              )
-            })}
+                      <div className="flex gap-2 shrink-0">
+                        {o.status === 'PENDING' && (
+                          <button
+                            onClick={() => handleCancel(o.orderId)}
+                            disabled={actionId === o.orderId}
+                            className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 transition disabled:opacity-50"
+                          >
+                            Hủy
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(o.orderId)}
+                          disabled={actionId === o.orderId}
+                          className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 text-xs font-semibold hover:bg-rose-100 transition disabled:opacity-50"
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    </div>
+
+                    {isExpanded && <OrderDetail order={o} />}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </>
   )
 }

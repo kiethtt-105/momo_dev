@@ -108,7 +108,7 @@ async function handleP2P(params, res) {
     // sau này khi khách thanh toán xong).
     await saveOrder(orderId, {
       orderId, amount: amt, orderInfo, status: 'PENDING',
-      createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
+      createdAt: now, expiresAt, orderExpireMs: ORDER_EXPIRE_MS, paidAt: null, transId: '', payType: '',
       paymentOption: '', source: 'create-p2p',
       storeId, storeName, partnerName, type: 'p2p',
     })
@@ -120,7 +120,7 @@ async function handleP2P(params, res) {
       const finalMessage = formatResultCodeMessage(result.resultCode, result.message)
       await saveOrder(orderId, {
         orderId, amount: amt, orderInfo, status: 'FAILED',
-        createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
+        createdAt: now, expiresAt, orderExpireMs: ORDER_EXPIRE_MS, paidAt: null, transId: '', payType: '',
         paymentOption: '', source: 'create-p2p',
         storeId, storeName, partnerName, error: result.message || '',
         message: finalMessage, resultCode: result.resultCode,
@@ -143,7 +143,7 @@ async function handleP2P(params, res) {
 
     await saveOrder(orderId, {
       orderId, amount: amt, orderInfo, status: 'PENDING',
-      createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
+      createdAt: now, expiresAt, orderExpireMs: ORDER_EXPIRE_MS, paidAt: null, transId: '', payType: '',
       paymentOption: '', source: 'create-p2p',
       storeId, storeName, partnerName,
       payUrl: result.payUrl || '', deeplink: result.deeplink || '',
@@ -166,7 +166,7 @@ async function handleP2P(params, res) {
     try {
       await saveOrder(orderId, {
         orderId, amount: amt, orderInfo, status: 'FAILED',
-        createdAt: now, expiresAt, paidAt: null, transId: '', payType: '',
+        createdAt: now, expiresAt, orderExpireMs: ORDER_EXPIRE_MS, paidAt: null, transId: '', payType: '',
         paymentOption: '', source: 'create-p2p',
         storeId, storeName, partnerName, error: 'server_error',
         message: `⚠ Lỗi hệ thống (server) khi gọi MoMo — ADMIN cần kiểm tra log server: ${err.message || 'không rõ nguyên nhân'}`,

@@ -29,11 +29,14 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString('vi-VN')
 }
 
+// Bảng màu theo trạng thái — dùng chấm tròn đặc cho trạng thái "sống"
+// (đang chờ) và nhạt hơn cho trạng thái đã kết thúc, để mắt tự động dồn
+// vào những gì còn cần xử lý.
 const STATUS_META = {
-  PAID: { label: 'Thành công', dot: 'bg-emerald-500', text: 'text-emerald-700', bar: 'border-emerald-500' },
-  PENDING: { label: 'Đang chờ', dot: 'bg-amber-500', text: 'text-amber-700', bar: 'border-amber-500' },
-  FAILED: { label: 'Thất bại', dot: 'bg-rose-500', text: 'text-rose-700', bar: 'border-rose-500' },
-  EXPIRED: { label: 'Hết hạn', dot: 'bg-neutral-400', text: 'text-neutral-500', bar: 'border-neutral-300' },
+  PAID: { label: 'Thành công', dot: 'bg-emerald-500', text: 'text-emerald-700', chip: 'bg-emerald-50' },
+  PENDING: { label: 'Đang chờ', dot: 'bg-amber-500', text: 'text-amber-700', chip: 'bg-amber-50' },
+  FAILED: { label: 'Thất bại', dot: 'bg-rose-500', text: 'text-rose-700', chip: 'bg-rose-50' },
+  EXPIRED: { label: 'Hết hạn', dot: 'bg-stone-400', text: 'text-stone-500', chip: 'bg-stone-100' },
 }
 
 function StatusBadge({ status }) {
@@ -43,6 +46,18 @@ function StatusBadge({ status }) {
       <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
       {meta.label}
     </span>
+  )
+}
+
+// Thẻ số liệu phụ — dùng cho 3 chỉ số đi kèm bên dưới thẻ doanh thu chính.
+function MiniStat({ label, value, accent }) {
+  return (
+    <div className="flex-1 min-w-[7.5rem] rounded-2xl bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)]">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400 mb-1">{label}</p>
+      <p className={`text-xl font-extrabold tabular-nums ${accent === 'amber' ? 'text-amber-600' : 'text-stone-900'}`}>
+        {value}
+      </p>
+    </div>
   )
 }
 
@@ -77,16 +92,16 @@ export default function Home() {
         <meta name="description" content="Cổng thanh toán MoMo" />
       </Head>
 
-      <main className="min-h-screen bg-neutral-50 px-4 py-8 sm:py-12">
+      <main className="min-h-screen bg-[#FAF7F5] px-4 py-8 sm:py-12">
         <div className="w-full max-w-2xl mx-auto">
           {/* Header */}
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-11 h-11 shrink-0 rounded-2xl bg-momo flex items-center justify-center text-white font-extrabold text-lg">
+          <div className="flex items-center gap-3 mb-7">
+            <div className="w-11 h-11 shrink-0 rounded-2xl bg-momo flex items-center justify-center text-white font-extrabold text-lg shadow-[0_6px_16px_-6px_rgba(165,0,100,0.55)]">
               M
             </div>
             <div>
-              <h1 className="text-lg font-extrabold text-neutral-900 leading-tight">Momo Dev</h1>
-              <p className="text-neutral-500 text-xs">
+              <h1 className="text-lg font-extrabold text-stone-900 leading-tight tracking-tight">Momo Dev</h1>
+              <p className="text-stone-400 text-xs">
                 {new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
               </p>
             </div>
@@ -94,25 +109,35 @@ export default function Home() {
 
           {/* Lỗi tải dữ liệu */}
           {error && (
-            <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="mb-6 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {error} — thử tải lại trang.
             </div>
           )}
 
-          {/* Stat cards */}
-          <div className="grid grid-cols-2 gap-3 mb-8">
-            <StatCard label="Đơn hôm nay" value={orders === null ? '—' : today.length} />
-            <StatCard
-              label="Doanh thu hôm nay"
-              value={orders === null ? '—' : currency.format(todayRevenue)}
-              mono
-            />
-            <StatCard
+          {/* Doanh thu hôm nay — thẻ chính, chiếm trọng tâm thị giác */}
+          <div className="rounded-3xl bg-stone-900 px-6 py-6 mb-3 relative overflow-hidden shadow-[0_20px_40px_-20px_rgba(33,26,29,0.45)]">
+            <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full bg-momo/25 blur-2xl" />
+            <div className="absolute -left-10 -bottom-12 w-40 h-40 rounded-full bg-momo/10 blur-2xl" />
+            <p className="relative text-[11px] font-medium uppercase tracking-wide text-stone-400 mb-1.5">
+              Doanh thu hôm nay
+            </p>
+            <p className="relative text-4xl sm:text-5xl font-extrabold text-white tabular-nums tracking-tight">
+              {orders === null ? '—' : currency.format(todayRevenue)}
+            </p>
+            <p className="relative text-xs text-stone-400 mt-2">
+              {orders === null ? 'Đang tải…' : `${todayPaid.length} đơn đã thanh toán trong hôm nay`}
+            </p>
+          </div>
+
+          {/* 3 chỉ số phụ */}
+          <div className="flex flex-wrap gap-3 mb-8">
+            <MiniStat label="Đơn hôm nay" value={orders === null ? '—' : today.length} />
+            <MiniStat
               label="Đang chờ"
               value={orders === null ? '—' : todayPending.length}
               accent={todayPending.length > 0 ? 'amber' : undefined}
             />
-            <StatCard
+            <MiniStat
               label="Tỷ lệ thành công"
               value={orders === null ? '—' : (successRate === null ? '—' : `${successRate}%`)}
             />
@@ -122,13 +147,15 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row gap-3 mb-10">
             <Link
               href="/tao-giao-dich"
-              className="flex-1 text-center py-3.5 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition"
+              className="flex-1 text-center py-3.5 rounded-xl bg-momo text-white font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark transition"
+              target="_blank" rel="noopener noreferrer"
             >
               Tạo giao dịch
             </Link>
             <Link
               href="/quan-ly-giao-dich"
-              className="flex-1 text-center py-3.5 rounded-xl bg-white border border-neutral-200 text-neutral-800 font-semibold hover:bg-neutral-100 transition"
+              className="flex-1 text-center py-3.5 rounded-xl bg-white text-stone-800 font-semibold shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)] hover:bg-stone-50 transition"
+              target="_blank" rel="noopener noreferrer"
             >
               Quản lý giao dịch
             </Link>
@@ -137,7 +164,7 @@ export default function Home() {
           {/* Giao dịch gần nhất */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-neutral-900">Giao dịch gần nhất</h2>
+              <h2 className="text-sm font-semibold text-stone-900">Giao dịch gần nhất</h2>
               {orders !== null && orders.length > 8 && (
                 <Link href="/quan-ly-giao-dich" className="text-xs font-medium text-momo hover:underline">
                   Xem tất cả
@@ -148,14 +175,14 @@ export default function Home() {
             {orders === null && !error && (
               <div className="space-y-2">
                 {[0, 1, 2].map((i) => (
-                  <div key={i} className="h-14 rounded-xl bg-neutral-100 animate-pulse" />
+                  <div key={i} className="h-14 rounded-2xl bg-stone-100 animate-pulse" />
                 ))}
               </div>
             )}
 
             {orders !== null && recent.length === 0 && (
-              <div className="rounded-xl border border-dashed border-neutral-300 px-4 py-8 text-center">
-                <p className="text-sm text-neutral-500">Chưa có giao dịch nào.</p>
+              <div className="rounded-2xl border border-dashed border-stone-300 px-4 py-8 text-center">
+                <p className="text-sm text-stone-500">Chưa có giao dịch nào.</p>
                 <Link href="/tao-giao-dich" className="text-sm font-medium text-momo hover:underline mt-1 inline-block">
                   Tạo giao dịch đầu tiên
                 </Link>
@@ -163,22 +190,25 @@ export default function Home() {
             )}
 
             {recent.length > 0 && (
-              <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden divide-y divide-neutral-100">
+              <div className="rounded-2xl bg-white overflow-hidden divide-y divide-stone-100 shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)]">
                 {recent.map((o) => {
                   const meta = STATUS_META[o.status] || STATUS_META.EXPIRED
                   return (
-                    <div key={o.orderId} className={`flex items-center gap-3 px-4 py-3 border-l-4 ${meta.bar}`}>
+                    <div key={o.orderId} className="flex items-center gap-3 px-4 py-3">
+                      <span className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${meta.chip}`}>
+                        <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
+                      </span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-neutral-900 truncate">
+                        <p className="text-sm font-medium text-stone-900 truncate">
                           {o.orderInfo || o.orderId}
                         </p>
                         <div className="flex items-center gap-2 mt-0.5">
                           <StatusBadge status={o.status} />
-                          <span className="text-xs text-neutral-400">·</span>
-                          <span className="text-xs text-neutral-400">{timeAgo(o.createdAt)}</span>
+                          <span className="text-xs text-stone-300">·</span>
+                          <span className="text-xs text-stone-400">{timeAgo(o.createdAt)}</span>
                         </div>
                       </div>
-                      <div className="text-sm font-semibold text-neutral-900 tabular-nums whitespace-nowrap">
+                      <div className="text-sm font-semibold text-stone-900 tabular-nums whitespace-nowrap">
                         {currency.format(parseInt(o.amount) || 0)}
                       </div>
                     </div>
@@ -190,16 +220,5 @@ export default function Home() {
         </div>
       </main>
     </>
-  )
-}
-
-function StatCard({ label, value, mono, accent }) {
-  return (
-    <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5">
-      <p className="text-xs text-neutral-500 mb-1">{label}</p>
-      <p className={`text-xl font-extrabold text-neutral-900 tabular-nums ${mono ? 'tracking-tight' : ''} ${accent === 'amber' ? 'text-amber-600' : ''}`}>
-        {value}
-      </p>
-    </div>
   )
 }
