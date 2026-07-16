@@ -13,9 +13,17 @@
 //    cookie -> chuyển status sang 'authed' -> render trang thật.
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/router'
 import '../styles/globals.css'
 
+// Các route KHÔNG cần đăng nhập admin — link gửi trực tiếp cho khách
+// (vd: /thanh-toan?orderId=xxx qua Zalo, tin nhắn...).
+const PUBLIC_ROUTES = ['/thanh-toan']
+
 function LoginGate({ children }) {
+  const router = useRouter()
+  const isPublicRoute = PUBLIC_ROUTES.includes(router.pathname)
+
   const [status, setStatus] = useState('checking') // checking | authed | guest
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -31,8 +39,16 @@ function LoginGate({ children }) {
   }
 
   useEffect(() => {
+    // Trang public (gửi cho khách) không cần check session admin —
+    // vào thẳng, không hỏi mật khẩu, không gọi API session.
+    if (isPublicRoute) return
     checkSession()
-  }, [])
+  }, [isPublicRoute])
+
+  // Route public: render thẳng, bỏ qua toàn bộ gate.
+  if (isPublicRoute) {
+    return children
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
