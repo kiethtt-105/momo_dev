@@ -200,8 +200,9 @@ async function handleScan(params, res) {
   }
 
   const amt = parseInt(amount)
-  if (isNaN(amt) || amt < 1000 || amt > 10_000_000) {
-    return res.status(400).json({ error: 'Số tiền không hợp lệ (1.000 – 10.000.000 ₫)' })
+  // MoMo spec cho POS (Thanh Toán Bằng QR Cá Nhân): giới hạn 1.000 – 5.000.000 ₫
+  if (isNaN(amt) || amt < 1000 || amt > 5_000_000) {
+    return res.status(400).json({ error: 'Số tiền không hợp lệ (1.000 – 5.000.000 ₫)' })
   }
 
   const store = resolveStore((rawStoreId || '').toString().trim())
