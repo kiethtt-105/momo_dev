@@ -10,13 +10,34 @@
 // FAILED. Nhờ vậy nếu IPN bị mất, chỉ cần gọi route này 1 lần là đơn
 // được cập nhật đúng, không cần sửa tay trong Redis.
 //
-// Xác thực: CHỈ session admin đã đăng nhập — route này lộ dữ liệu giao
-// dịch chi tiết nên không dùng chung API key với create.js (Shortcuts).
+// Xác thực — 2 luồng:
+//   - Admin (session đã đăng nhập): full quyền, trả về TOÀN BỘ field MoMo
+//     gốc như trước giờ.
+//   - Khách (trang /thanh-toan, không đăng nhập): PHẢI kèm ?token=xxx do
+//     /api/momo/guest-check-token cấp riêng cho ĐÚNG orderId này — token
+//     dùng 1 lần, hết hạn rất nhanh, không dùng lại được và không dùng
+//     được cho đơn khác. Khách chỉ nhận về vài field tối thiểu để cập
+//     nhật giao diện (isPaid/isStillPending/orderStatus) — KHÔNG lộ
+//     transId, amount, payType, promotionInfo... như phía admin.
 
 import { queryMoMoTransaction } from '../../../lib/momo'
 import { getOrder, saveOrder } from '../../../lib/orders'
 import { formatResultCodeMessage } from '../../../lib/momoResultCodes'
 import { verifySession, refreshSession } from '../admin/login'
+
+// Xác nhận + "đốt" token dùng-1-lần của khách. Trả về null nếu hợp lệ (và
+// đã đánh dấu used ngay lập tức), hoặc chuỗi lý do lỗi nếu không hợp lệ.
+// Đốt token TRƯỚC khi gọi MoMo — kể cả khi bước gọi MoMo phía dưới lỗi/
+// timeout, token này vẫn không dùng lại được nữa (đúng tinh thần "dùng 1 lần").
+async function consumeGuestToken(order, orderId, token) {
+  const t = order?.guestCheckToken
+  if (!token) return 'Thiếu token'
+  if (!t || t.token !== token) return 'Token không hợp lệ'
+  if (t.used) return 'Token đã được sử dụng'
+  if (t.expiresAt <= Date.now()) return 'Token đã hết hạn'
+  await saveOrder(orderId, { ...order, guestCheckToken: { ...t, used: true } })
+  return null
+}
 
 // resultCode MoMo dùng để báo "giao dịch chưa tồn tại / chưa có kết quả",
 // KHÔNG phải là lỗi thật — gặp mã này thì KHÔNG được ghi đè order thành
@@ -31,15 +52,26 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  if (!verifySession(req)) {
-    return res.status(401).json({ error: 'Chưa đăng nhập admin' })
-  }
-  refreshSession(req, res)
-
   const params = req.method === 'GET' ? req.query : req.body
   const orderId = (params.orderId || '').toString().trim()
   if (!orderId) {
     return res.status(400).json({ error: 'Thiếu orderId' })
+  }
+
+  const isAdmin = verifySession(req)
+  if (isAdmin) refreshSession(req, res)
+
+  // Khách (không session admin): bắt buộc có token hợp lệ, cấp riêng cho
+  // đúng orderId này. Đọc order 1 lần ở đây để vừa xác thực token vừa tái
+  // dùng cho bước đồng bộ Redis phía dưới (đỡ getOrder lại lần 2).
+  let prevForGuest = null
+  if (!isAdmin) {
+    const token = (params.token || '').toString().trim()
+    prevForGuest = await getOrder(orderId)
+    if (!prevForGuest) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' })
+
+    const tokenErr = await consumeGuestToken(prevForGuest, orderId, token)
+    if (tokenErr) return res.status(401).json({ error: tokenErr })
   }
 
   try {
@@ -48,7 +80,7 @@ export default async function handler(req, res) {
     const isPaid = resultCode === 0
     const isStillPending = PENDING_RESULT_CODES.has(resultCode)
 
-    const prev = await getOrder(orderId)
+    const prev = prevForGuest || await getOrder(orderId)
     let syncedStatus = prev?.status || null
 
     // Chỉ ghi đè Redis khi có kết quả DỨT KHOÁT (thành công hoặc thất bại
@@ -70,6 +102,17 @@ export default async function handler(req, res) {
       }
       await saveOrder(orderId, record)
       syncedStatus = record.status
+    }
+
+    if (!isAdmin) {
+      // Khách: CHỈ trả field tối thiểu để cập nhật giao diện — không lộ
+      // transId, amount, payType, promotionInfo, partnerCode, requestId...
+      return res.status(200).json({
+        orderId,
+        isPaid,
+        isStillPending,
+        orderStatus: syncedStatus,
+      })
     }
 
     return res.status(200).json({
