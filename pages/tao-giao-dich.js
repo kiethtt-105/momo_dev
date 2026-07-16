@@ -69,6 +69,31 @@ const ORDER_TTL_SECONDS = 10 * 60 // khớp ORDER_EXPIRE_MS ở api/momo/create.
 const POLL_INTERVAL_MS = 30000 // hỏi MoMo qua /api/momo/query — 30s để đỡ tốn quota
 const POLL_GRACE_MS = 2 * 60 * 1000 // vẫn dò thêm 2 phút sau khi hết hạn, phòng IPN tới trễ
 
+const CACHE_KEY_P2P = 'momo_tao_gd_p2p_v1'
+const CACHE_KEY_SCAN = 'momo_tao_gd_scan_v1'
+
+// Lưu danh sách đơn hàng vào sessionStorage (còn giữ được khi bấm F5 reload
+// tab, tự xóa khi đóng tab hẳn) — tránh mất đơn đang mở khi lỡ tay F5.
+function loadOrderCache(key) {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.sessionStorage.getItem(key)
+    const list = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+function saveOrderCache(key, list) {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(list))
+  } catch {
+    /* sessionStorage đầy hoặc bị chặn -> bỏ qua, không chặn thao tác chính */
+  }
+}
+
 function formatVND(n) {
   const num = Number(n)
   if (Number.isNaN(num)) return n
@@ -119,12 +144,6 @@ const IconCopy = (props) => (
 const IconCheck = (props) => (
   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
     <polyline points="20 6 9 17 4 12" />
-  </svg>
-)
-const IconCamera = (props) => (
-  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-    <circle cx="12" cy="13" r="4" />
   </svg>
 )
 
@@ -386,6 +405,14 @@ function TransactionRow({ tx, onRemove }) {
     }
   }
 
+  // Kiểm tra ngay 1 lần lúc mount — hữu ích nhất với đơn được khôi phục lại
+  // từ cache sau khi F5, để cập nhật trạng thái mới nhất ngay lập tức thay
+  // vì phải chờ tới lần dò định kỳ tiếp theo.
+  useEffect(() => {
+    handleCheck()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Tự động dò trạng thái trong lúc chờ khách quét, dừng ngay khi có kết
   // quả cuối (PAID/FAILED). Hết hạn rồi vẫn dò thêm 2 phút phòng trường
   // hợp khách bấm thanh toán sát giờ / IPN tới trễ, sau đó ngưng hẳn.
@@ -399,6 +426,15 @@ function TransactionRow({ tx, onRemove }) {
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, isExpired])
+
+  // Đơn hết hạn (đếm ngược về 0) mà không phải chờ tay bấm ✕ nữa — tự động
+  // xóa khỏi danh sách sau khi hết luôn cả khoảng dò thêm phòng IPN trễ
+  // (POLL_GRACE_MS), nếu vẫn chưa có kết quả cuối cùng.
+  useEffect(() => {
+    if (status !== 'PENDING' || !isExpired) return
+    const timer = setTimeout(() => onRemove(tx.orderId), POLL_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, [status, isExpired, tx.orderId, onRemove])
 
   const displayStatus = status === 'PENDING' && isExpired ? 'EXPIRED' : status
   const showPayInfo = status === 'PENDING' && !isExpired
@@ -669,7 +705,14 @@ function OrdersPanel({ transactions, onRemove }) {
 // State danh sách được giữ ở đây (không phải trong form) để cột phải
 // luôn cập nhật ngay khi cột trái tạo đơn thành công.
 function P2PSection({ stores, storeId, setStoreId }) {
-  const [transactions, setTransactions] = useState([]) // cộng dồn, không giới hạn
+  // Khôi phục lại danh sách đơn từ sessionStorage lúc mount — tránh mất
+  // đơn đang mở khi lỡ tay bấm F5 reload trang.
+  const [transactions, setTransactions] = useState(() => loadOrderCache(CACHE_KEY_P2P)) // cộng dồn, không giới hạn
+
+  // Mỗi khi danh sách đổi (thêm/xóa đơn) thì lưu lại cache ngay.
+  useEffect(() => {
+    saveOrderCache(CACHE_KEY_P2P, transactions)
+  }, [transactions])
 
   function handleCreated(tx) {
     // Thêm đơn MỚI vào đầu danh sách, KHÔNG xóa các đơn trước đó và
@@ -746,10 +789,11 @@ function ScanOrderForm({ stores, storeId, setStoreId, onCreated }) {
 function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
-  // Mặc định KHÔNG mở khung camera — chỉ mở khi admin chủ động bấm nút.
-  const [cameraOpen, setCameraOpen] = useState(false)
   const [cameraError, setCameraError] = useState('')
   const inputRef = useRef(null)
+  // Camera tự động bật ngay khi đơn này đang được CHỌN và còn chờ quét —
+  // không cần bấm nút mở nữa; tự tắt khi đổi sang đơn khác hoặc quét xong.
+  const cameraActive = selected && order.status === 'INPUT'
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const rafRef = useRef(null)
@@ -773,12 +817,12 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
     detectorRef.current = null
   }
 
-  // Bật camera thật (getUserMedia) chỉ khi cameraOpen=true, đơn đang được
-  // CHỌN và còn ở trạng thái chờ quét — tắt/nhả camera ngay khi 1 trong 3
-  // điều kiện đó không còn đúng (đổi đơn khác, quét xong, hủy đơn...) để
-  // tránh giữ camera chạy ngầm không cần thiết.
+  // Bật camera thật (getUserMedia) tự động ngay khi đơn đang được CHỌN và
+  // còn ở trạng thái chờ quét — tắt/nhả camera ngay khi 1 trong 2 điều
+  // kiện đó không còn đúng (đổi đơn khác, quét xong, hủy đơn...) để tránh
+  // giữ camera chạy ngầm không cần thiết.
   useEffect(() => {
-    if (!cameraOpen || !selected || order.status !== 'INPUT') {
+    if (!cameraActive) {
       stopCamera()
       return
     }
@@ -793,7 +837,6 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
         if (codes.length > 0 && codes[0].rawValue) {
           const value = codes[0].rawValue
           cancelled = true
-          setCameraOpen(false)
           onUpdate(order.localId, { code: value })
           submitCode(value)
           return
@@ -835,7 +878,7 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
       stopCamera()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraOpen, selected, order.status])
+  }, [cameraActive])
 
   async function submitCode(code) {
     const trimmed = String(code || '').trim()
@@ -881,7 +924,12 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
   function handleCodeChange(e) {
     const val = e.target.value
     onUpdate(order.localId, { code: val })
-    if (val.trim().length >= 18) submitCode(val)
+    const trimmed = val.trim()
+    // Mã thanh toán thường đủ 18 số; một số máy quét/định dạng có thêm
+    // tiền tố "MM" ở đầu thì đủ mã sẽ là 20 ký tự — tự nhận diện để biết
+    // khi nào đã gõ/quét đủ mà auto-submit đúng lúc, không phải chờ Enter.
+    const requiredLen = /^MM/i.test(trimmed) ? 20 : 18
+    if (trimmed.length >= requiredLen) submitCode(val)
   }
 
   function handleKeyDown(e) {
@@ -963,50 +1011,26 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
 
       {order.status === 'INPUT' && (
         <>
-          <div className="flex items-center gap-2 mt-3">
-            <input
-              ref={inputRef}
-              type="text"
-              value={order.code}
-              onChange={handleCodeChange}
-              onKeyDown={handleKeyDown}
-              onClick={(e) => e.stopPropagation()}
-              disabled={!selected}
-              placeholder={selected ? 'Quét/dán mã QR của khách (18 số)' : 'Bấm chọn đơn này để quét'}
-              className="flex-1 min-w-0 rounded-xl border border-neutral-200 px-4 py-3 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo disabled:bg-neutral-50 disabled:text-neutral-400"
-            />
-            {/* Nút hiện/ẩn khung camera — khung camera mặc định ĐÓNG, chỉ mở
-                khi admin chủ động bấm nút này (dùng cho máy không có đầu
-                đọc mã rời, quét trực tiếp bằng camera thiết bị). */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                if (!selected) return
-                setCameraOpen((v) => !v)
-              }}
-              disabled={!selected}
-              title={cameraOpen ? 'Ẩn khung camera' : 'Quét bằng camera'}
-              className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-xl border transition disabled:opacity-40 ${
-                cameraOpen
-                  ? 'bg-momo text-white border-momo'
-                  : 'border-neutral-200 text-neutral-500 hover:bg-neutral-100'
-              }`}
-            >
-              <IconCamera />
-            </button>
-          </div>
+          <input
+            ref={inputRef}
+            type="text"
+            value={order.code}
+            onChange={handleCodeChange}
+            onKeyDown={handleKeyDown}
+            onClick={(e) => e.stopPropagation()}
+            disabled={!selected}
+            placeholder={selected ? 'Quét/dán mã QR của khách (18-20 số)' : 'Bấm chọn đơn này để quét'}
+            className="w-full rounded-xl border border-neutral-200 px-4 py-3 mt-3 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo disabled:bg-neutral-50 disabled:text-neutral-400"
+          />
 
-          {cameraOpen && (
+          {/* Camera tự động bật khi đơn này đang được chọn, không cần bấm
+              nút — không còn khung viền hướng dẫn, chỉ hiện luồng hình. */}
+          {cameraActive && (
             <div
               className="mt-3 rounded-xl overflow-hidden border border-neutral-200 bg-black relative"
               onClick={(e) => e.stopPropagation()}
             >
               <video ref={videoRef} className="w-full aspect-square object-cover" muted playsInline />
-              <div className="absolute inset-8 border-2 border-white/70 rounded-lg pointer-events-none" />
-              <p className="absolute bottom-2 inset-x-0 text-center text-[11px] text-white/90">
-                Đưa mã QR của khách vào khung
-              </p>
             </div>
           )}
           {cameraError && (
@@ -1086,8 +1110,23 @@ function ScanOrdersPanel({ orders, selectedId, onSelect, onRemove, onUpdate }) {
 // phải là danh sách các đơn đang chờ/đang xử lý. State giữ ở đây nên
 // vẫn còn nguyên khi tab này bị ẩn đi (xem TaoGiaoDich bên dưới).
 function ScanSection({ stores, storeId, setStoreId }) {
-  const [orders, setOrders] = useState([])
-  const [selectedId, setSelectedId] = useState(null)
+  // Khôi phục lại danh sách đơn chờ scan từ sessionStorage lúc mount —
+  // tránh mất đơn khi lỡ tay bấm F5. Đơn nào đang dở "Đang xử lý..." lúc
+  // bị reload (kết quả submit chưa kịp về) thì đưa lại về trạng thái chờ
+  // quét để không bị kẹt mãi.
+  const [orders, setOrders] = useState(() =>
+    loadOrderCache(CACHE_KEY_SCAN).map((o) => (o.status === 'PROCESSING' ? { ...o, status: 'INPUT' } : o))
+  )
+  const [selectedId, setSelectedId] = useState(() => {
+    const restored = loadOrderCache(CACHE_KEY_SCAN)
+    const firstPending = restored.find((o) => o.status === 'INPUT')
+    return firstPending ? firstPending.localId : null
+  })
+
+  // Mỗi khi danh sách đổi thì lưu lại cache ngay.
+  useEffect(() => {
+    saveOrderCache(CACHE_KEY_SCAN, orders)
+  }, [orders])
 
   function handleCreated(order) {
     setOrders((cur) => [order, ...cur])
