@@ -71,28 +71,38 @@ const POLL_GRACE_MS = 2 * 60 * 1000 // vẫn dò thêm 2 phút sau khi hết h�
 
 const CACHE_KEY_P2P = 'momo_tao_gd_p2p_v1'
 const CACHE_KEY_SCAN = 'momo_tao_gd_scan_v1'
+const CACHE_KEY_TAB = 'momo_tao_gd_tab_v1'
+const CACHE_KEY_STORES = 'momo_tao_gd_stores_v1'
 
-// Lưu danh sách đơn hàng vào sessionStorage (còn giữ được khi bấm F5 reload
-// tab, tự xóa khi đóng tab hẳn) — tránh mất đơn đang mở khi lỡ tay F5.
-function loadOrderCache(key) {
-  if (typeof window === 'undefined') return []
+// Lưu vào sessionStorage (còn giữ được khi bấm F5 reload tab, tự xóa khi
+// đóng tab hẳn) — dùng chung cho danh sách đơn, tab đang chọn, danh sách
+// cửa hàng... F5 xong đọc lại ngay từ cache, không phải chờ gọi API lại
+// mới có dữ liệu để hiển thị.
+function loadCache(key, fallback) {
+  if (typeof window === 'undefined') return fallback
   try {
     const raw = window.sessionStorage.getItem(key)
-    const list = raw ? JSON.parse(raw) : []
-    return Array.isArray(list) ? list : []
+    return raw ? JSON.parse(raw) : fallback
   } catch {
-    return []
+    return fallback
   }
 }
 
-function saveOrderCache(key, list) {
+function saveCache(key, value) {
   if (typeof window === 'undefined') return
   try {
-    window.sessionStorage.setItem(key, JSON.stringify(list))
+    window.sessionStorage.setItem(key, JSON.stringify(value))
   } catch {
     /* sessionStorage đầy hoặc bị chặn -> bỏ qua, không chặn thao tác chính */
   }
 }
+
+// Giữ tên cũ cho danh sách đơn (đọc rõ nghĩa hơn ở chỗ gọi).
+function loadOrderCache(key) {
+  const list = loadCache(key, [])
+  return Array.isArray(list) ? list : []
+}
+const saveOrderCache = saveCache
 
 function formatVND(n) {
   const num = Number(n)
@@ -227,15 +237,18 @@ function QRCodeImage({ orderId }) {
   const src = `/api/momo/qr-extract?orderId=${encodeURIComponent(orderId)}&_r=${nonce}`
 
   return (
-    <div className="relative w-40 h-40 rounded-xl border border-neutral-200 bg-white overflow-hidden shrink-0 shadow-sm">
+    <div className="relative w-[300px] h-[300px] max-w-full aspect-square rounded-xl border border-neutral-200 bg-white overflow-hidden shrink-0 shadow-sm">
       {status !== 'ready' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white">
-          <div className="w-7 h-7 rounded-full border-[3px] border-momo/15 border-t-momo animate-spin" />
-          <span className="text-[10px] text-neutral-400">
+          <div className="w-8 h-8 rounded-full border-[3px] border-momo/15 border-t-momo animate-spin" />
+          <span className="text-xs text-neutral-400">
             {status === 'error' ? 'Chưa tải được, đang thử lại...' : 'Đang tải mã QR...'}
           </span>
         </div>
       )}
+      {/* Ảnh gốc MoMo trả về là 350x350 — hiển thị gần đúng kích thước
+          thật (không co nhỏ xuống 160px như trước) để các ô vuông trong
+          mã QR không bị mờ/dính vào nhau khi máy quét đọc. */}
       <img
         key={nonce}
         src={src}
@@ -243,6 +256,7 @@ function QRCodeImage({ orderId }) {
         className={`w-full h-full object-contain transition-opacity duration-300 ${
           status === 'ready' ? 'opacity-100' : 'opacity-0'
         }`}
+        style={{ imageRendering: 'crisp-edges' }}
         onLoad={() => setStatus('ready')}
         onError={() => setStatus('error')}
       />
@@ -250,7 +264,7 @@ function QRCodeImage({ orderId }) {
         type="button"
         onClick={refreshNow}
         title="Làm mới mã QR"
-        className="absolute bottom-1.5 right-1.5 w-7 h-7 rounded-full bg-white/95 border border-neutral-200 shadow-sm flex items-center justify-center text-neutral-500 hover:text-momo hover:border-momo/40 transition"
+        className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-white/95 border border-neutral-200 shadow-sm flex items-center justify-center text-neutral-500 hover:text-momo hover:border-momo/40 transition"
       >
         <IconRefresh className={status === 'loading' ? 'animate-spin' : ''} />
       </button>
@@ -423,10 +437,13 @@ function CountdownRing({ secondsLeft, isExpired }) {
 // copy. Tự động dò trạng thái mỗi 5s trong lúc còn hạn (và thêm ít phút
 // sau khi hết hạn phòng IPN tới trễ) — nút "Kiểm tra ngay" chỉ để admin
 // chủ động dò thêm khi cần.
-function TransactionRow({ tx, onRemove }) {
-  const [status, setStatus] = useState('PENDING')
+function TransactionRow({ tx, onRemove, onUpdate }) {
+  // Khởi tạo từ trạng thái đã lưu trong cache (nếu có) thay vì luôn bắt đầu
+  // lại từ PENDING — F5 xong đơn đã PAID/FAILED hiện đúng ngay lập tức,
+  // không bị nháy về "Chờ thanh toán" trong lúc chờ dò lại MoMo.
+  const [status, setStatus] = useState(tx.status || 'PENDING')
   const [checking, setChecking] = useState(false)
-  const [checkedOnce, setCheckedOnce] = useState(false)
+  const [checkedOnce, setCheckedOnce] = useState(!!tx.checkedOnce)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const { secondsLeft, isExpired } = useCountdown(tx.expiresAt)
@@ -436,6 +453,14 @@ function TransactionRow({ tx, onRemove }) {
     typeof window !== 'undefined'
       ? `${window.location.origin}/thanh-toan?orderId=${encodeURIComponent(tx.orderId)}`
       : `/thanh-toan?orderId=${encodeURIComponent(tx.orderId)}`
+
+  // Mỗi khi trạng thái đổi thì ghi ngược lại cache (qua onUpdate của
+  // P2PSection) để F5 lần sau đọc được ngay, không cần dò lại MoMo mới
+  // biết đơn đã PAID/FAILED hay chưa.
+  useEffect(() => {
+    onUpdate(tx.orderId, { status, checkedOnce })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, checkedOnce])
 
   // Hỏi THẲNG MoMo (server-to-server, qua /api/momo/query) thay vì chỉ
   // đọc Redis — Redis chỉ được cập nhật khi IPN tới, mà IPN có lúc
@@ -472,10 +497,11 @@ function TransactionRow({ tx, onRemove }) {
     }
   }
 
-  // Kiểm tra ngay 1 lần lúc mount — hữu ích nhất với đơn được khôi phục lại
-  // từ cache sau khi F5, để cập nhật trạng thái mới nhất ngay lập tức thay
-  // vì phải chờ tới lần dò định kỳ tiếp theo.
+  // Đơn đã có kết quả cuối cùng (PAID/FAILED) từ cache rồi thì khỏi cần
+  // dò lại MoMo lúc mount nữa — đỡ tốn 1 lượt gọi API vô ích. Chỉ những
+  // đơn còn PENDING mới cần xác nhận lại ngay để chắc chắn là mới nhất.
   useEffect(() => {
+    if (status === 'PAID' || status === 'FAILED') return
     handleCheck()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -633,8 +659,12 @@ function StoreSelect({ stores, storeId, setStoreId }) {
 }
 
 function useStores() {
-  const [stores, setStores] = useState([])
-  const [storeId, setStoreId] = useState('')
+  // Đọc cache trước — F5 xong có dropdown cửa hàng ngay lập tức, không phải
+  // chờ /api/momo/stores trả về mới hiện. Vẫn fetch ngầm bên dưới để đồng
+  // bộ nếu danh sách cửa hàng có thay đổi.
+  const cached = loadCache(CACHE_KEY_STORES, { stores: [], storeId: '' })
+  const [stores, setStores] = useState(Array.isArray(cached.stores) ? cached.stores : [])
+  const [storeId, setStoreId] = useState(cached.storeId || '')
 
   useEffect(() => {
     fetch('/api/momo/stores', { credentials: 'include' })
@@ -642,11 +672,19 @@ function useStores() {
       .then((data) => {
         const list = data.stores || []
         setStores(list)
-        const def = list.find((s) => s.default)
-        if (def) setStoreId(def.id)
+        setStoreId((cur) => {
+          if (cur && list.some((s) => s.id === cur)) return cur // vẫn còn hợp lệ -> giữ nguyên lựa chọn cũ
+          const def = list.find((s) => s.default)
+          return def ? def.id : cur
+        })
       })
       .catch(() => {})
   }, [])
+
+  // Lưu lại cache mỗi khi đổi để F5 lần sau đọc được ngay.
+  useEffect(() => {
+    saveCache(CACHE_KEY_STORES, { stores, storeId })
+  }, [stores, storeId])
 
   return { stores, storeId, setStoreId }
 }
@@ -745,7 +783,7 @@ function P2POrderForm({ stores, storeId, setStoreId, onCreated }) {
 // Cột phải — danh sách "Đơn hàng đang mở", xếp dọc xuống (không cuộn
 // ngang như trước). Dính theo khi cuộn trang trên màn hình rộng để luôn
 // thấy được trong lúc vẫn thao tác ở form bên trái.
-function OrdersPanel({ transactions, onRemove }) {
+function OrdersPanel({ transactions, onRemove, onUpdate }) {
   return (
     <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-neutral-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(165,0,100,0.18)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.08),0_24px_56px_-20px_rgba(165,0,100,0.24)] transition-shadow duration-300 p-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
       <div className="flex items-center justify-between mb-3 px-1">
@@ -757,7 +795,7 @@ function OrdersPanel({ transactions, onRemove }) {
       ) : (
         <div className="flex flex-col gap-3">
           {transactions.map((tx) => (
-            <TransactionRow key={tx.orderId} tx={tx} onRemove={onRemove} />
+            <TransactionRow key={tx.orderId} tx={tx} onRemove={onRemove} onUpdate={onUpdate} />
           ))}
         </div>
       )}
@@ -788,10 +826,17 @@ function P2PSection({ stores, storeId, setStoreId }) {
     setTransactions((cur) => cur.filter((t) => t.orderId !== orderId))
   }
 
+  // Ghi trạng thái mới nhất (PENDING/PAID/FAILED, đã check hay chưa...) của
+  // từng đơn ngược lại vào danh sách -> tự lưu cache -> F5 lần sau đọc
+  // được ngay, không phải chờ dò lại MoMo mới biết đơn đã xong hay chưa.
+  function handleUpdate(orderId, patch) {
+    setTransactions((cur) => cur.map((t) => (t.orderId === orderId ? { ...t, ...patch } : t)))
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
       <P2POrderForm stores={stores} storeId={storeId} setStoreId={setStoreId} onCreated={handleCreated} />
-      <OrdersPanel transactions={transactions} onRemove={handleRemove} />
+      <OrdersPanel transactions={transactions} onRemove={handleRemove} onUpdate={handleUpdate} />
     </div>
   )
 }
@@ -1087,16 +1132,17 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
             className="w-full rounded-xl border border-neutral-200 px-4 py-3 mt-3 font-mono focus:outline-none focus:ring-4 focus:ring-momo/15 focus:border-momo transition-all duration-200 disabled:bg-neutral-50 disabled:text-neutral-400"
           />
 
-          {/* Camera tự động bật khi đơn này đang được chọn, không cần bấm
-              nút — không còn khung viền hướng dẫn, chỉ hiện luồng hình. */}
-          {cameraActive && (
-            <div
-              className="mt-3 rounded-xl overflow-hidden border border-neutral-200 bg-black relative"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <video ref={videoRef} className="w-full aspect-square object-cover" muted playsInline />
-            </div>
-          )}
+          {/* Camera vẫn tự bật/chạy ngầm 100% khi đơn này đang được chọn
+              (để BarcodeDetector đọc mã QR từ khung hình) — nhưng KHÔNG
+              hiện khung hình camera lên giao diện nữa, video được ẩn đi
+              (không dùng display:none vì 1 số trình duyệt sẽ ngừng decode
+              khung hình của video ẩn kiểu đó, ảnh hưởng việc quét). */}
+          <video
+            ref={videoRef}
+            className="absolute w-px h-px opacity-0 overflow-hidden pointer-events-none -z-10"
+            muted
+            playsInline
+          />
           {cameraError && (
             <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-2">{cameraError}</p>
           )}
@@ -1221,7 +1267,15 @@ function ScanSection({ stores, storeId, setStoreId }) {
 }
 
 export default function TaoGiaoDich() {
-  const [tab, setTab] = useState('p2p')
+  // Khôi phục lại tab đang xem từ cache — F5 xong vẫn ở đúng tab vừa
+  // đứng, không bị nhảy về P2P mặc định.
+  const [tab, setTab] = useState(() => {
+    const cached = loadCache(CACHE_KEY_TAB, 'p2p')
+    return cached === 'scan' ? 'scan' : 'p2p'
+  })
+  useEffect(() => {
+    saveCache(CACHE_KEY_TAB, tab)
+  }, [tab])
   // Gọi 1 lần duy nhất, dùng chung cho cả 2 tab — vừa đỡ fetch trùng
   // /api/momo/stores, vừa giữ cửa hàng đang chọn đồng bộ khi đổi tab.
   const { stores, storeId, setStoreId } = useStores()
