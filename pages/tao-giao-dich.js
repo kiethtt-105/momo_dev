@@ -146,6 +146,13 @@ const IconCheck = (props) => (
     <polyline points="20 6 9 17 4 12" />
   </svg>
 )
+const IconRefresh = (props) => (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polyline points="23 4 23 10 17 10" />
+    <polyline points="1 20 1 14 7 14" />
+    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+  </svg>
+)
 
 // Dòng hiển thị 1 link bằng BIỂU TƯỢNG thay vì chuỗi ký tự (không lộ link
 // dạng plain text ra giao diện nữa): biểu tượng liên kết để MỞ link (tab
@@ -191,6 +198,66 @@ function IconLinkRow({ label, value, href }) {
   )
 }
 
+// Ảnh mã QR thanh toán — có trạng thái "đang tải" riêng (Puppeteer trích
+// ảnh có lúc cold-start chậm nên ảnh không về ngay), tự động thử tải lại
+// mỗi 30s nếu vẫn chưa có ảnh, và có nút "Làm mới" để admin chủ động tải
+// lại ngay bất cứ lúc nào (không cần chờ đủ 30s).
+function QRCodeImage({ orderId }) {
+  const [status, setStatus] = useState('loading') // loading | ready | error
+  const [nonce, setNonce] = useState(0)
+
+  function refreshNow() {
+    setStatus('loading')
+    setNonce((n) => n + 1)
+  }
+
+  // Tự thử tải lại mỗi 30s CHỈ khi ảnh vẫn chưa sẵn sàng — ảnh đã tải
+  // xong rồi thì thôi, không cần tải lại nữa.
+  useEffect(() => {
+    const id = setInterval(() => {
+      setStatus((cur) => {
+        if (cur === 'ready') return cur
+        setNonce((n) => n + 1)
+        return 'loading'
+      })
+    }, 30000)
+    return () => clearInterval(id)
+  }, [])
+
+  const src = `/api/momo/qr-extract?orderId=${encodeURIComponent(orderId)}&_r=${nonce}`
+
+  return (
+    <div className="relative w-40 h-40 rounded-xl border border-neutral-200 bg-white overflow-hidden shrink-0 shadow-sm">
+      {status !== 'ready' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white">
+          <div className="w-7 h-7 rounded-full border-[3px] border-momo/15 border-t-momo animate-spin" />
+          <span className="text-[10px] text-neutral-400">
+            {status === 'error' ? 'Chưa tải được, đang thử lại...' : 'Đang tải mã QR...'}
+          </span>
+        </div>
+      )}
+      <img
+        key={nonce}
+        src={src}
+        alt="Mã QR thanh toán"
+        className={`w-full h-full object-contain transition-opacity duration-300 ${
+          status === 'ready' ? 'opacity-100' : 'opacity-0'
+        }`}
+        onLoad={() => setStatus('ready')}
+        onError={() => setStatus('error')}
+      />
+      <button
+        type="button"
+        onClick={refreshNow}
+        title="Làm mới mã QR"
+        className="absolute bottom-1.5 right-1.5 w-7 h-7 rounded-full bg-white/95 border border-neutral-200 shadow-sm flex items-center justify-center text-neutral-500 hover:text-momo hover:border-momo/40 transition"
+      >
+        <IconRefresh className={status === 'loading' ? 'animate-spin' : ''} />
+      </button>
+    </div>
+  )
+}
+
 // Popup xác nhận CỦA TRANG WEB (không phải confirm()/alert() của trình
 // duyệt) — hiện giữa màn hình, có lớp phủ mờ phía sau, bấm ra ngoài hoặc
 // "Hủy" để đóng mà không làm gì.
@@ -198,11 +265,11 @@ function ConfirmModal({ open, title, description, confirmLabel = 'Xác nhận', 
   if (!open) return null
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4"
       onClick={onCancel}
     >
       <div
-        className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5"
+        className="bg-white rounded-2xl shadow-2xl shadow-black/20 ring-1 ring-black/5 max-w-sm w-full p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-base font-bold text-neutral-900 mb-1.5">{title}</h3>
@@ -282,9 +349,9 @@ function OrderDetailModal({ open, onClose, orderId }) {
     : []
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5"
+        className="bg-white rounded-2xl shadow-2xl shadow-black/20 ring-1 ring-black/5 max-w-sm w-full p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -440,7 +507,7 @@ function TransactionRow({ tx, onRemove }) {
   const showPayInfo = status === 'PENDING' && !isExpired
 
   return (
-    <div className="bg-white rounded-2xl border border-neutral-200 p-4 relative">
+    <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-neutral-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(165,0,100,0.18)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.08),0_24px_56px_-20px_rgba(165,0,100,0.24)] hover:-translate-y-0.5 transition-all duration-300 p-4 relative">
       {/* Đã thu tiền rồi thì KHÔNG cho hủy nữa — ẩn hẳn nút ✕ để tránh
           bấm nhầm làm mất đơn đã thanh toán khỏi danh sách theo dõi. */}
       {status !== 'PAID' && (
@@ -475,7 +542,7 @@ function TransactionRow({ tx, onRemove }) {
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLE[displayStatus] || 'bg-neutral-100 text-neutral-600'}`}>
+            <span className={`inline-block text-[11px] font-semibold px-2.5 py-1 rounded-full shadow-sm ring-1 ring-inset ring-black/5 ${STATUS_STYLE[displayStatus] || 'bg-neutral-100 text-neutral-600'}`}>
               {STATUS_TEXT[displayStatus] || displayStatus}
             </span>
             <span className="font-mono text-[11px] text-neutral-400 truncate">{tx.orderId}</span>
@@ -521,15 +588,12 @@ function TransactionRow({ tx, onRemove }) {
           {/* Lấy ảnh QR trực tiếp từ /api/momo/qr-extract?orderId=... (gọi
               URL này là ra luôn ảnh QR thật) thay vì phụ thuộc vào
               qrCodeImage trả về lúc tạo đơn — tránh trường hợp Puppeteer
-              chưa kịp trích xong khi vừa tạo xong đơn. */}
-          <img
-            src={`/api/momo/qr-extract?orderId=${encodeURIComponent(tx.orderId)}`}
-            alt="Mã QR thanh toán"
-            className="w-40 h-40 rounded-xl border border-neutral-200 object-contain bg-white"
-          />
+              chưa kịp trích xong khi vừa tạo xong đơn. QRCodeImage tự lo
+              trạng thái đang tải + tự thử lại mỗi 30s + nút làm mới tay. */}
+          <QRCodeImage orderId={tx.orderId} />
           <div className="w-full flex flex-col gap-2">
-            <IconLinkRow label="Link thanh toán gửi khách" value={thanhToanUrl} href={thanhToanUrl} />
-            {tx.payUrl && <IconLinkRow label="Link thanh toán MoMo" value={tx.payUrl} href={tx.payUrl} />}
+            <IconLinkRow label="Trang thanh toán (gửi cho khách)" value={thanhToanUrl} href={thanhToanUrl} />
+            {tx.payUrl && <IconLinkRow label="Mở thẳng trong ứng dụng MoMo" value={tx.payUrl} href={tx.payUrl} />}
           </div>
         </div>
       )}
@@ -539,7 +603,7 @@ function TransactionRow({ tx, onRemove }) {
           onClick={handleCheck}
           disabled={checking}
           title="Hỏi trực tiếp MoMo, không chờ webhook"
-          className="w-full py-2.5 rounded-xl bg-momo text-white text-xs font-semibold hover:bg-momo-dark transition disabled:opacity-50 mt-3"
+          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-momo to-momo-dark text-white shadow-md shadow-momo/30 hover:shadow-lg hover:shadow-momo/40 hover:brightness-110 active:scale-[0.98] text-xs font-semibold transition disabled:opacity-50 mt-3"
         >
           {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
         </button>
@@ -556,7 +620,7 @@ function StoreSelect({ stores, storeId, setStoreId }) {
       <select
         value={storeId}
         onChange={(e) => setStoreId(e.target.value)}
-        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 bg-white focus:outline-none focus:ring-4 focus:ring-momo/15 focus:border-momo transition-all duration-200"
       >
         {stores.map((s) => (
           <option key={s.id} value={s.id}>
@@ -640,7 +704,7 @@ function P2POrderForm({ stores, storeId, setStoreId, onCreated }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-neutral-200 p-6">
+    <form onSubmit={handleSubmit} className="bg-white/90 backdrop-blur-sm rounded-2xl border border-neutral-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(165,0,100,0.18)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.08),0_24px_56px_-20px_rgba(165,0,100,0.24)] transition-shadow duration-300 p-6">
       <StoreSelect stores={stores} storeId={storeId} setStoreId={setStoreId} />
 
       <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
@@ -651,7 +715,7 @@ function P2POrderForm({ stores, storeId, setStoreId, onCreated }) {
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
         placeholder="Ví dụ: 50000"
-        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-4 font-mono focus:outline-none focus:ring-4 focus:ring-momo/15 focus:border-momo transition-all duration-200"
         required
       />
 
@@ -661,7 +725,7 @@ function P2POrderForm({ stores, storeId, setStoreId, onCreated }) {
         value={orderInfo}
         onChange={(e) => setOrderInfo(e.target.value)}
         placeholder="Ví dụ: Thanh toán đơn hàng"
-        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 focus:outline-none focus:ring-4 focus:ring-momo/15 focus:border-momo transition-all duration-200"
       />
 
       {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{error}</p>}
@@ -669,7 +733,7 @@ function P2POrderForm({ stores, storeId, setStoreId, onCreated }) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full py-3.5 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition disabled:opacity-50"
+        className="w-full py-3.5 rounded-xl bg-gradient-to-r from-momo to-momo-dark text-white shadow-md shadow-momo/30 hover:shadow-lg hover:shadow-momo/40 hover:brightness-110 active:scale-[0.98] font-semibold transition disabled:opacity-50"
       >
         {loading ? 'Đang tạo...' : 'Tạo mã QR'}
       </button>
@@ -683,7 +747,7 @@ function P2POrderForm({ stores, storeId, setStoreId, onCreated }) {
 // thấy được trong lúc vẫn thao tác ở form bên trái.
 function OrdersPanel({ transactions, onRemove }) {
   return (
-    <div className="bg-white rounded-2xl border border-neutral-200 p-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+    <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-neutral-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(165,0,100,0.18)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.08),0_24px_56px_-20px_rgba(165,0,100,0.24)] transition-shadow duration-300 p-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
       <div className="flex items-center justify-between mb-3 px-1">
         <h2 className="text-sm font-semibold text-neutral-700">Đơn hàng đang mở</h2>
         <span className="text-xs font-mono text-neutral-400">{transactions.length}</span>
@@ -753,7 +817,7 @@ function ScanOrderForm({ stores, storeId, setStoreId, onCreated }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-neutral-200 p-6">
+    <form onSubmit={handleSubmit} className="bg-white/90 backdrop-blur-sm rounded-2xl border border-neutral-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(165,0,100,0.18)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.08),0_24px_56px_-20px_rgba(165,0,100,0.24)] transition-shadow duration-300 p-6">
       <StoreSelect stores={stores} storeId={storeId} setStoreId={setStoreId} />
 
       <label className="block text-sm font-medium text-neutral-700 mb-1">Số tiền (₫)</label>
@@ -764,13 +828,13 @@ function ScanOrderForm({ stores, storeId, setStoreId, onCreated }) {
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
         placeholder="Ví dụ: 50000"
-        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+        className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-5 font-mono focus:outline-none focus:ring-4 focus:ring-momo/15 focus:border-momo transition-all duration-200"
         required
       />
 
       <button
         type="submit"
-        className="w-full py-3.5 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition"
+        className="w-full py-3.5 rounded-xl bg-gradient-to-r from-momo to-momo-dark text-white shadow-md shadow-momo/30 hover:shadow-lg hover:shadow-momo/40 hover:brightness-110 active:scale-[0.98] font-semibold transition"
       >
         Mở đơn chờ scan
       </button>
@@ -959,9 +1023,9 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
   return (
     <div
       onClick={() => order.status === 'INPUT' && onSelect(order.localId)}
-      className={`bg-white rounded-2xl border p-4 relative transition ${
+      className={`bg-white/90 backdrop-blur-sm rounded-2xl border p-4 relative shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.1)] hover:-translate-y-0.5 transition-all duration-300 ${
         order.status === 'INPUT' ? 'cursor-pointer' : ''
-      } ${selected ? 'border-momo ring-2 ring-momo/30' : 'border-neutral-200'}`}
+      } ${selected ? 'border-momo ring-2 ring-momo/30 shadow-[0_4px_18px_-4px_rgba(165,0,100,0.3)]' : 'border-neutral-200/70'}`}
     >
       {/* Đã thu tiền rồi thì KHÔNG cho hủy nữa — ẩn hẳn nút ✕ để tránh
           bấm nhầm làm mất đơn đã thanh toán khỏi danh sách theo dõi. */}
@@ -996,7 +1060,7 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${badgeStyle}`}>
+            <span className={`inline-block text-[11px] font-semibold px-2.5 py-1 rounded-full shadow-sm ring-1 ring-inset ring-black/5 ${badgeStyle}`}>
               {badgeText}
             </span>
             {selected && order.status === 'INPUT' && (
@@ -1020,7 +1084,7 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
             onClick={(e) => e.stopPropagation()}
             disabled={!selected}
             placeholder={selected ? 'Quét/dán mã QR của khách (18-20 số)' : 'Bấm chọn đơn này để quét'}
-            className="w-full rounded-xl border border-neutral-200 px-4 py-3 mt-3 font-mono focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo disabled:bg-neutral-50 disabled:text-neutral-400"
+            className="w-full rounded-xl border border-neutral-200 px-4 py-3 mt-3 font-mono focus:outline-none focus:ring-4 focus:ring-momo/15 focus:border-momo transition-all duration-200 disabled:bg-neutral-50 disabled:text-neutral-400"
           />
 
           {/* Camera tự động bật khi đơn này đang được chọn, không cần bấm
@@ -1079,7 +1143,7 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
 // cùng lúc; đơn đang được chọn tô viền để dễ nhận biết đang quét đơn nào.
 function ScanOrdersPanel({ orders, selectedId, onSelect, onRemove, onUpdate }) {
   return (
-    <div className="bg-white rounded-2xl border border-neutral-200 p-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+    <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-neutral-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(165,0,100,0.18)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.08),0_24px_56px_-20px_rgba(165,0,100,0.24)] transition-shadow duration-300 p-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
       <div className="flex items-center justify-between mb-3 px-1">
         <h2 className="text-sm font-semibold text-neutral-700">Đơn chờ scan</h2>
         <span className="text-xs font-mono text-neutral-400">{orders.length}</span>
@@ -1163,43 +1227,61 @@ export default function TaoGiaoDich() {
   const { stores, storeId, setStoreId } = useStores()
 
   return (
-    <main className="min-h-screen px-4 py-10 bg-neutral-50">
-      {/* Khung ngoài LUÔN 1 kích thước (max-w-5xl) bất kể đang ở tab nào
-          — đổi tab không còn làm layout đổi bề rộng/giật hình nữa. */}
-      <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-xl font-extrabold text-neutral-900">Tạo giao dịch</h1>
-          <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-800">
-            ← Trang chủ
-          </Link>
-        </div>
+    <>
+      {/* Gradient momo CHUYỂN ĐỘNG thật (đổi background-position liên tục,
+          không phải chỉ 1 nền tĩnh) — thay hẳn cho nền trắng/xám phẳng gây
+          chói mắt trước đây. Card nội dung vẫn nền sáng để dễ đọc, chỉ có
+          NỀN NGOÀI CÙNG là gradient động. */}
+      <style>{`
+        @keyframes momoFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .momo-flow-bg {
+          background-image: linear-gradient(120deg, #3d0026, #a50064, #ff2e9f, #7a0050, #a50064, #2c001c);
+          background-size: 320% 320%;
+          animation: momoFlow 6s ease-in-out infinite;
+        }
+      `}</style>
+      <main className="momo-flow-bg min-h-screen px-4 py-10 relative overflow-hidden">
+        {/* Khung ngoài LUÔN 1 kích thước (max-w-5xl) bất kể đang ở tab nào
+            — đổi tab không còn làm layout đổi bề rộng/giật hình nữa. */}
+        <div className="max-w-5xl mx-auto relative z-10">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-xl font-extrabold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.25)]">Tạo giao dịch</h1>
+            <Link href="/" className="text-sm text-white/70 hover:text-white transition">
+              ← Trang chủ
+            </Link>
+          </div>
 
-        <div className="flex gap-2 mb-6 bg-neutral-100 rounded-xl p-1 max-w-sm w-full">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${
-                tab === t.key
-                  ? 'bg-white text-neutral-900 shadow-sm'
-                  : 'text-neutral-500 hover:text-neutral-800'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+          <div className="flex gap-2 mb-6 bg-white/15 backdrop-blur-md rounded-xl p-1 max-w-sm w-full shadow-lg ring-1 ring-white/25">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${
+                  tab === t.key
+                    ? 'bg-white text-momo-dark shadow-md'
+                    : 'text-white/75 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-        {/* Cả 2 tab LUÔN được mount sẵn, chỉ ẩn/hiện bằng class "hidden"
-            — không conditional-render nữa nên đơn hàng/đơn chờ scan
-            đang mở không bị mất khi bấm qua bấm lại giữa 2 tab. */}
-        <div className={tab === 'p2p' ? '' : 'hidden'}>
-          <P2PSection stores={stores} storeId={storeId} setStoreId={setStoreId} />
+          {/* Cả 2 tab LUÔN được mount sẵn, chỉ ẩn/hiện bằng class "hidden"
+              — không conditional-render nữa nên đơn hàng/đơn chờ scan
+              đang mở không bị mất khi bấm qua bấm lại giữa 2 tab. */}
+          <div className={tab === 'p2p' ? '' : 'hidden'}>
+            <P2PSection stores={stores} storeId={storeId} setStoreId={setStoreId} />
+          </div>
+          <div className={tab === 'scan' ? '' : 'hidden'}>
+            <ScanSection stores={stores} storeId={storeId} setStoreId={setStoreId} />
+          </div>
         </div>
-        <div className={tab === 'scan' ? '' : 'hidden'}>
-          <ScanSection stores={stores} storeId={storeId} setStoreId={setStoreId} />
-        </div>
-      </div>
-    </main>
+      </main>
+    </>
   )
 }
