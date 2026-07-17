@@ -45,6 +45,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import jsQR from 'jsqr'
 
 const TABS = [
   { key: 'p2p', label: 'Tạo mã QR (P2P)' },
@@ -373,7 +374,6 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
   const [checking, setChecking] = useState(false)
   const [checkedOnce, setCheckedOnce] = useState(!!tx.checkedOnce)
   const [confirmRemove, setConfirmRemove] = useState(false)
-  const [confirmClose, setConfirmClose] = useState(null) // null | 'PAID' | 'FAILED'
   const [showDetail, setShowDetail] = useState(false)
   const { secondsLeft, isExpired } = useCountdown(tx.expiresAt)
   const expiredAtRef = useRef(null)
@@ -460,26 +460,32 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
 
   const displayStatus = status === 'PENDING' && isExpired ? 'EXPIRED' : status
   const showPayInfo = status === 'PENDING' && !isExpired
+  // Đơn đã có KẾT QUẢ CUỐI CÙNG (thành công/thất bại) thì không còn gì để
+  // "hủy" nữa — chữ đúng phải là "Đóng" (chỉ ẩn khỏi màn hình theo dõi,
+  // không tác động dữ liệu giao dịch đã ghi nhận). "Hủy đơn" chỉ dùng cho
+  // đơn còn đang chờ thanh toán, vì lúc đó hủy thật sự có ý nghĩa dừng
+  // theo dõi 1 đơn chưa xong.
+  const isFinal = status === 'PAID' || status === 'FAILED'
 
   return (
     <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-neutral-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(165,0,100,0.18)] hover:shadow-[0_4px_18px_-4px_rgba(0,0,0,0.08),0_24px_56px_-20px_rgba(165,0,100,0.24)] hover:-translate-y-0.5 transition-all duration-300 p-4 relative">
-      {/* Đã thu tiền rồi thì KHÔNG cho hủy nữa — ẩn hẳn nút ✕ để tránh
-          bấm nhầm làm mất đơn đã thanh toán khỏi danh sách theo dõi. */}
-      {status !== 'PAID' && (
-        <button
-          onClick={() => setConfirmRemove(true)}
-          className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
-          title="Hủy đơn"
-        >
-          ✕
-        </button>
-      )}
+      <button
+        onClick={() => setConfirmRemove(true)}
+        className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
+        title={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}
+      >
+        ✕
+      </button>
 
       <ConfirmModal
         open={confirmRemove}
-        title="Hủy đơn hàng này?"
-        description="Đơn sẽ được ẩn khỏi danh sách trên màn hình này. Nếu khách đã thanh toán, giao dịch vẫn được ghi nhận bình thường."
-        confirmLabel="Hủy đơn"
+        title={isFinal ? 'Đóng giao dịch này?' : 'Hủy đơn hàng này?'}
+        description={
+          isFinal
+            ? 'Giao dịch đã có kết quả cuối cùng — đóng chỉ để ẩn khỏi danh sách trên màn hình này, không ảnh hưởng gì tới dữ liệu giao dịch đã ghi nhận.'
+            : 'Đơn sẽ được ẩn khỏi danh sách trên màn hình này. Nếu khách đã thanh toán, giao dịch vẫn được ghi nhận bình thường.'
+        }
+        confirmLabel={isFinal ? 'Đóng' : 'Hủy đơn'}
         onCancel={() => setConfirmRemove(false)}
         onConfirm={() => {
           setConfirmRemove(false)
@@ -549,50 +555,15 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
       )}
 
       {status !== 'PAID' && status !== 'FAILED' && (
-        <>
-          <button
-            onClick={handleCheck}
-            disabled={checking}
-            title="Hỏi trực tiếp MoMo, không chờ webhook"
-            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-momo to-momo-dark text-white shadow-md shadow-momo/30 hover:shadow-lg hover:shadow-momo/40 hover:brightness-110 active:scale-[0.98] text-xs font-semibold transition disabled:opacity-50 mt-3"
-          >
-            {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
-          </button>
-
-          {/* Đóng đơn thủ công khi admin đã chắc chắn kết quả ngoài thực tế
-              (ví dụ khách báo đã chuyển khoản qua kênh khác, hoặc chắc chắn
-              khách không thanh toán nữa) — không cần chờ MoMo báo về. */}
-          <div className="flex gap-2 mt-2">
-            <button
-              type="button"
-              onClick={() => setConfirmClose('PAID')}
-              className="flex-1 py-2 rounded-xl border border-emerald-200 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 transition"
-            >
-              ✓ Đóng: Thành công
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmClose('FAILED')}
-              className="flex-1 py-2 rounded-xl border border-red-200 text-red-600 text-xs font-semibold hover:bg-red-50 transition"
-            >
-              ✕ Đóng: Thất bại
-            </button>
-          </div>
-        </>
+        <button
+          onClick={handleCheck}
+          disabled={checking}
+          title="Hỏi trực tiếp MoMo, không chờ webhook"
+          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-momo to-momo-dark text-white shadow-md shadow-momo/30 hover:shadow-lg hover:shadow-momo/40 hover:brightness-110 active:scale-[0.98] text-xs font-semibold transition disabled:opacity-50 mt-3"
+        >
+          {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
+        </button>
       )}
-
-      <ConfirmModal
-        open={!!confirmClose}
-        title={confirmClose === 'PAID' ? 'Đóng đơn là đã thành công?' : 'Đóng đơn là đã thất bại?'}
-        description="Trạng thái sẽ được chốt thủ công tại đây, không dò MoMo lại nữa cho đơn này."
-        confirmLabel="Xác nhận"
-        onCancel={() => setConfirmClose(null)}
-        onConfirm={() => {
-          setStatus(confirmClose)
-          setCheckedOnce(true)
-          setConfirmClose(null)
-        }}
-      />
     </div>
   )
 }
@@ -865,7 +836,7 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const rafRef = useRef(null)
-  const detectorRef = useRef(null)
+  const canvasRef = useRef(null) // canvas ẩn dùng để đọc từng khung hình, không gắn vào DOM
 
   useEffect(() => {
     if (selected && order.status === 'INPUT' && inputRef.current) {
@@ -882,13 +853,21 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
       streamRef.current.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
-    detectorRef.current = null
   }
 
   // Bật camera thật (getUserMedia) tự động ngay khi đơn đang được CHỌN và
   // còn ở trạng thái chờ quét — tắt/nhả camera ngay khi 1 trong 2 điều
   // kiện đó không còn đúng (đổi đơn khác, quét xong, hủy đơn...) để tránh
   // giữ camera chạy ngầm không cần thiết.
+  //
+  // Đọc mã QR bằng jsQR (giải mã trực tiếp trên canvas) thay vì
+  // BarcodeDetector của trình duyệt — BarcodeDetector CHỈ có ở Chrome/
+  // Edge trên Android & desktop, KHÔNG có ở Safari (iOS/macOS) và
+  // Firefox. Trước đây dùng BarcodeDetector nên trên các trình duyệt đó
+  // camera mở lên bình thường (xin quyền, có đèn báo) nhưng không bao
+  // giờ nhận ra mã QR — đúng như tình trạng "đã cấp quyền camera nhưng
+  // không quét được". jsQR chạy bằng JS thuần trên mọi trình duyệt nên
+  // không còn phụ thuộc trình duyệt hỗ trợ hay không.
   useEffect(() => {
     if (!cameraActive) {
       stopCamera()
@@ -898,12 +877,27 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
     let cancelled = false
     setCameraError('')
 
-    async function scanLoop() {
-      if (cancelled || !videoRef.current || !detectorRef.current) return
+    function readQrFromFrame() {
+      const video = videoRef.current
+      if (!video || video.readyState < video.HAVE_CURRENT_DATA) return null
+      const w = video.videoWidth
+      const h = video.videoHeight
+      if (!w || !h) return null
+      const canvas = canvasRef.current || (canvasRef.current = document.createElement('canvas'))
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      ctx.drawImage(video, 0, 0, w, h)
+      const imageData = ctx.getImageData(0, 0, w, h)
+      return jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' })
+    }
+
+    function scanLoop() {
+      if (cancelled || !videoRef.current) return
       try {
-        const codes = await detectorRef.current.detect(videoRef.current)
-        if (codes.length > 0 && codes[0].rawValue) {
-          const value = codes[0].rawValue
+        const result = readQrFromFrame()
+        if (result && result.data) {
+          const value = result.data
           cancelled = true
           onUpdate(order.localId, { code: value })
           submitCode(value)
@@ -929,12 +923,7 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
           videoRef.current.srcObject = stream
           await videoRef.current.play()
         }
-        if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
-          detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] })
-          scanLoop()
-        } else {
-          setCameraError('Trình duyệt này chưa hỗ trợ tự nhận diện mã QR qua camera — dùng máy quét mã rời hoặc nhập/dán tay.')
-        }
+        scanLoop()
       } catch {
         if (!cancelled) setCameraError('Không mở được camera — kiểm tra quyền truy cập camera của trình duyệt.')
       }
@@ -1024,6 +1013,11 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
       ? 'Đang xử lý...'
       : 'Chờ quét mã'
 
+  // Cũng như bên P2P: đơn đã có KẾT QUẢ CUỐI CÙNG (đã thu tiền/thất bại)
+  // thì nút X phải là "Đóng" (chỉ ẩn khỏi màn hình), không còn là "Hủy
+  // đơn" nữa vì không còn gì để hủy — giao dịch đã xong rồi.
+  const isFinal = order.status === 'PAID' || order.status === 'FAILED'
+
   return (
     <div
       onClick={() => order.status === 'INPUT' && onSelect(order.localId)}
@@ -1031,26 +1025,26 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
         order.status === 'INPUT' ? 'cursor-pointer' : ''
       } ${selected ? 'border-momo ring-2 ring-momo/30 shadow-[0_4px_18px_-4px_rgba(165,0,100,0.3)]' : 'border-neutral-200/70'}`}
     >
-      {/* Đã thu tiền rồi thì KHÔNG cho hủy nữa — ẩn hẳn nút ✕ để tránh
-          bấm nhầm làm mất đơn đã thanh toán khỏi danh sách theo dõi. */}
-      {order.status !== 'PAID' && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            setConfirmRemove(true)
-          }}
-          className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
-          title="Hủy đơn"
-        >
-          ✕
-        </button>
-      )}
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          setConfirmRemove(true)
+        }}
+        className="absolute top-3 right-3 text-neutral-300 hover:text-neutral-500 text-sm w-6 h-6 flex items-center justify-center"
+        title={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}
+      >
+        ✕
+      </button>
 
       <ConfirmModal
         open={confirmRemove}
-        title="Hủy đơn chờ scan này?"
-        description="Đơn sẽ được ẩn khỏi danh sách trên màn hình này."
-        confirmLabel="Hủy đơn"
+        title={isFinal ? 'Đóng giao dịch này?' : 'Hủy đơn chờ scan này?'}
+        description={
+          isFinal
+            ? 'Giao dịch đã có kết quả cuối cùng — đóng chỉ để ẩn khỏi danh sách trên màn hình này, không ảnh hưởng gì tới dữ liệu giao dịch đã ghi nhận.'
+            : 'Đơn sẽ được ẩn khỏi danh sách trên màn hình này.'
+        }
+        confirmLabel={isFinal ? 'Đóng' : 'Hủy đơn'}
         onCancel={() => setConfirmRemove(false)}
         onConfirm={() => {
           setConfirmRemove(false)
@@ -1092,7 +1086,7 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
           />
 
           {/* Camera vẫn tự bật/chạy ngầm 100% khi đơn này đang được chọn
-              (để BarcodeDetector đọc mã QR từ khung hình) — nhưng KHÔNG
+              (để vòng lặp đọc từng khung hình bằng jsQR) — nhưng KHÔNG
               hiện khung hình camera lên giao diện nữa, video được ẩn đi
               (không dùng display:none vì 1 số trình duyệt sẽ ngừng decode
               khung hình của video ẩn kiểu đó, ảnh hưởng việc quét). */}
