@@ -403,6 +403,7 @@ export default function ThanhToan() {
   const orderAbortRef = useRef(null)
   const transferAbortRef = useRef(null)
   const qrAbortRef = useRef(null)
+  const autoCheckDoneRef = useRef(false)
 
   // -------------------------------------------------------------------
   // Tải đơn hàng — silent = true khi chạy nền (poll/hydrate), không bật
@@ -618,13 +619,33 @@ export default function ThanhToan() {
     }
   }, [orderId, order?.status, expired, scheduleNextPoll])
 
-  async function handleManualCheck() {
+  const handleManualCheck = useCallback(async () => {
     setChecking(true)
     await checkRealStatus()
     await loadOrder({ manual: true })
     // Đơn vẫn đang chờ thì dời lại mốc tự động kiểm tra tiếp theo, tránh tra trùng
     if (order?.status === 'PENDING' && !expired) scheduleNextPoll()
-  }
+  }, [checkRealStatus, loadOrder, order?.status, expired, scheduleNextPoll])
+
+  // -------------------------------------------------------------------
+  // Tự động bấm "Kiểm tra kết quả" khi khách vừa được /result chuyển sang
+  // (?autoCheck=1) — lúc này MoMo vừa redirect về nên giao dịch gần như
+  // chắc chắn đã có kết quả, không cần bắt khách tự bấm nút. Chỉ chạy
+  // đúng 1 lần (autoCheckDoneRef), sau đó dọn "autoCheck" khỏi URL để
+  // F5 lại trang không tự kiểm tra lặp lại vô ích.
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    if (!router.isReady || !orderId) return
+    if (autoCheckDoneRef.current) return
+    if (!router.query.autoCheck) return
+
+    autoCheckDoneRef.current = true
+    handleManualCheck()
+
+    const { autoCheck, ...rest } = router.query
+    router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady, orderId])
 
   // ---------------------------------------------------------------------
   // Màn hình theo trạng thái

@@ -15,6 +15,12 @@
 // thể tự sửa URL, vd ?resultCode=0 giả) — nên KHÔNG chuyển tiếp các query
 // này sang /thanh-toan, chỉ chuyển orderId. Trạng thái thật do /thanh-toan
 // tự tra lại từ server (đã xác minh chữ ký MoMo ở ipn.js).
+//
+// Có gắn thêm &autoCheck=1: khách đến đây tức là MoMo VỪA redirect về sau
+// khi thanh toán, nên giao dịch gần như chắc chắn đã có kết quả cuối rồi —
+// /thanh-toan sẽ tự bấm giúp nút "Kiểm tra kết quả" một lần khi vừa vào,
+// không bắt khách phải tự bấm lại. Cờ này chỉ dùng đúng 1 lần, /thanh-toan
+// sẽ tự dọn khỏi URL ngay sau khi dùng xong.
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/router'
@@ -38,7 +44,7 @@ export default function Result() {
   useEffect(() => {
     if (!router.isReady) return
     if (!orderId) return
-    router.replace(`/thanh-toan?orderId=${encodeURIComponent(orderId)}`)
+    router.replace(`/thanh-toan?orderId=${encodeURIComponent(orderId)}&autoCheck=1`)
   }, [router.isReady, orderId, router])
 
   const missingOrderId = router.isReady && !orderId
