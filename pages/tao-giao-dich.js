@@ -156,14 +156,6 @@ const IconCheck = (props) => (
     <polyline points="20 6 9 17 4 12" />
   </svg>
 )
-const IconRefresh = (props) => (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-    <polyline points="23 4 23 10 17 10" />
-    <polyline points="1 20 1 14 7 14" />
-    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-  </svg>
-)
-
 // Dòng hiển thị 1 link bằng BIỂU TƯỢNG thay vì chuỗi ký tự (không lộ link
 // dạng plain text ra giao diện nữa): biểu tượng liên kết để MỞ link (tab
 // mới), biểu tượng copy riêng để chép văn bản — không mở link.
@@ -204,70 +196,6 @@ function IconLinkRow({ label, value, href }) {
           {copied ? <IconCheck /> : <IconCopy />}
         </button>
       </div>
-    </div>
-  )
-}
-
-// Ảnh mã QR thanh toán — có trạng thái "đang tải" riêng (Puppeteer trích
-// ảnh có lúc cold-start chậm nên ảnh không về ngay), tự động thử tải lại
-// mỗi 30s nếu vẫn chưa có ảnh, và có nút "Làm mới" để admin chủ động tải
-// lại ngay bất cứ lúc nào (không cần chờ đủ 30s).
-function QRCodeImage({ orderId }) {
-  const [status, setStatus] = useState('loading') // loading | ready | error
-  const [nonce, setNonce] = useState(0)
-
-  function refreshNow() {
-    setStatus('loading')
-    setNonce((n) => n + 1)
-  }
-
-  // Tự thử tải lại mỗi 30s CHỈ khi ảnh vẫn chưa sẵn sàng — ảnh đã tải
-  // xong rồi thì thôi, không cần tải lại nữa.
-  useEffect(() => {
-    const id = setInterval(() => {
-      setStatus((cur) => {
-        if (cur === 'ready') return cur
-        setNonce((n) => n + 1)
-        return 'loading'
-      })
-    }, 30000)
-    return () => clearInterval(id)
-  }, [])
-
-  const src = `/api/momo/qr-extract?orderId=${encodeURIComponent(orderId)}&_r=${nonce}`
-
-  return (
-    <div className="relative w-[300px] h-[300px] max-w-full aspect-square rounded-xl border border-neutral-200 bg-white overflow-hidden shrink-0 shadow-sm">
-      {status !== 'ready' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white">
-          <div className="w-8 h-8 rounded-full border-[3px] border-momo/15 border-t-momo animate-spin" />
-          <span className="text-xs text-neutral-400">
-            {status === 'error' ? 'Chưa tải được, đang thử lại...' : 'Đang tải mã QR...'}
-          </span>
-        </div>
-      )}
-      {/* Ảnh gốc MoMo trả về là 350x350 — hiển thị gần đúng kích thước
-          thật (không co nhỏ xuống 160px như trước) để các ô vuông trong
-          mã QR không bị mờ/dính vào nhau khi máy quét đọc. */}
-      <img
-        key={nonce}
-        src={src}
-        alt="Mã QR thanh toán"
-        className={`w-full h-full object-contain transition-opacity duration-300 ${
-          status === 'ready' ? 'opacity-100' : 'opacity-0'
-        }`}
-        style={{ imageRendering: 'crisp-edges' }}
-        onLoad={() => setStatus('ready')}
-        onError={() => setStatus('error')}
-      />
-      <button
-        type="button"
-        onClick={refreshNow}
-        title="Làm mới mã QR"
-        className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-white/95 border border-neutral-200 shadow-sm flex items-center justify-center text-neutral-500 hover:text-momo hover:border-momo/40 transition"
-      >
-        <IconRefresh className={status === 'loading' ? 'animate-spin' : ''} />
-      </button>
     </div>
   )
 }
@@ -445,6 +373,7 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
   const [checking, setChecking] = useState(false)
   const [checkedOnce, setCheckedOnce] = useState(!!tx.checkedOnce)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(null) // null | 'PAID' | 'FAILED'
   const [showDetail, setShowDetail] = useState(false)
   const { secondsLeft, isExpired } = useCountdown(tx.expiresAt)
   const expiredAtRef = useRef(null)
@@ -609,31 +538,61 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
         </p>
       )}
 
+      {/* Không hiện mã QR ở đây nữa — chỉ 2 link (trang thanh toán tự tạo
+          và link mở thẳng app MoMo), dùng chung IconLinkRow (biểu tượng mở
+          + biểu tượng chép, không lộ link dạng chữ). */}
       {showPayInfo && (
-        <div className="flex flex-col items-center gap-3 mt-3">
-          {/* Lấy ảnh QR trực tiếp từ /api/momo/qr-extract?orderId=... (gọi
-              URL này là ra luôn ảnh QR thật) thay vì phụ thuộc vào
-              qrCodeImage trả về lúc tạo đơn — tránh trường hợp Puppeteer
-              chưa kịp trích xong khi vừa tạo xong đơn. QRCodeImage tự lo
-              trạng thái đang tải + tự thử lại mỗi 30s + nút làm mới tay. */}
-          <QRCodeImage orderId={tx.orderId} />
-          <div className="w-full flex flex-col gap-2">
-            <IconLinkRow label="Trang thanh toán (gửi cho khách)" value={thanhToanUrl} href={thanhToanUrl} />
-            {tx.payUrl && <IconLinkRow label="Mở thẳng trong ứng dụng MoMo" value={tx.payUrl} href={tx.payUrl} />}
-          </div>
+        <div className="w-full flex flex-col gap-2 mt-3">
+          <IconLinkRow label="Trang thanh toán (gửi cho khách)" value={thanhToanUrl} href={thanhToanUrl} />
+          {tx.payUrl && <IconLinkRow label="Mở thẳng trong ứng dụng MoMo" value={tx.payUrl} href={tx.payUrl} />}
         </div>
       )}
 
       {status !== 'PAID' && status !== 'FAILED' && (
-        <button
-          onClick={handleCheck}
-          disabled={checking}
-          title="Hỏi trực tiếp MoMo, không chờ webhook"
-          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-momo to-momo-dark text-white shadow-md shadow-momo/30 hover:shadow-lg hover:shadow-momo/40 hover:brightness-110 active:scale-[0.98] text-xs font-semibold transition disabled:opacity-50 mt-3"
-        >
-          {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
-        </button>
+        <>
+          <button
+            onClick={handleCheck}
+            disabled={checking}
+            title="Hỏi trực tiếp MoMo, không chờ webhook"
+            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-momo to-momo-dark text-white shadow-md shadow-momo/30 hover:shadow-lg hover:shadow-momo/40 hover:brightness-110 active:scale-[0.98] text-xs font-semibold transition disabled:opacity-50 mt-3"
+          >
+            {checking ? 'Đang hỏi MoMo...' : 'Kiểm tra ngay'}
+          </button>
+
+          {/* Đóng đơn thủ công khi admin đã chắc chắn kết quả ngoài thực tế
+              (ví dụ khách báo đã chuyển khoản qua kênh khác, hoặc chắc chắn
+              khách không thanh toán nữa) — không cần chờ MoMo báo về. */}
+          <div className="flex gap-2 mt-2">
+            <button
+              type="button"
+              onClick={() => setConfirmClose('PAID')}
+              className="flex-1 py-2 rounded-xl border border-emerald-200 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 transition"
+            >
+              ✓ Đóng: Thành công
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmClose('FAILED')}
+              className="flex-1 py-2 rounded-xl border border-red-200 text-red-600 text-xs font-semibold hover:bg-red-50 transition"
+            >
+              ✕ Đóng: Thất bại
+            </button>
+          </div>
+        </>
       )}
+
+      <ConfirmModal
+        open={!!confirmClose}
+        title={confirmClose === 'PAID' ? 'Đóng đơn là đã thành công?' : 'Đóng đơn là đã thất bại?'}
+        description="Trạng thái sẽ được chốt thủ công tại đây, không dò MoMo lại nữa cho đơn này."
+        confirmLabel="Xác nhận"
+        onCancel={() => setConfirmClose(null)}
+        onConfirm={() => {
+          setStatus(confirmClose)
+          setCheckedOnce(true)
+          setConfirmClose(null)
+        }}
+      />
     </div>
   )
 }
@@ -1282,20 +1241,28 @@ export default function TaoGiaoDich() {
 
   return (
     <>
-      {/* Gradient momo CHUYỂN ĐỘNG thật (đổi background-position liên tục,
-          không phải chỉ 1 nền tĩnh) — thay hẳn cho nền trắng/xám phẳng gây
-          chói mắt trước đây. Card nội dung vẫn nền sáng để dễ đọc, chỉ có
-          NỀN NGOÀI CÙNG là gradient động. */}
+      {/* Nền gradient loang nhẹ nhàng, nhiều màu pastel sáng (thay cho nền
+          1 màu hồng đậm gắt trước đây) — 5 mảng màu (hồng đào, vàng kem,
+          xanh biển nhạt, xanh mint, tím lavender) chuyển động chậm rãi,
+          hoà vào nhau như mực loang trên nước. Card nội dung vẫn nền sáng
+          để dễ đọc, chỉ NỀN NGOÀI CÙNG là gradient động. */}
       <style>{`
         @keyframes momoFlow {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
+          0%   { background-position: 0% 50%, 100% 0%, 50% 100%, 20% 20%, 80% 80%; }
+          50%  { background-position: 100% 50%, 0% 100%, 50% 0%, 80% 80%, 20% 20%; }
+          100% { background-position: 0% 50%, 100% 0%, 50% 100%, 20% 20%, 80% 80%; }
         }
         .momo-flow-bg {
-          background-image: linear-gradient(120deg, #3d0026, #a50064, #ff2e9f, #7a0050, #a50064, #2c001c);
-          background-size: 320% 320%;
-          animation: momoFlow 6s ease-in-out infinite;
+          background-color: #fdf7f4;
+          background-image:
+            radial-gradient(circle at center, rgba(255, 197, 210, 0.75), transparent 60%),
+            radial-gradient(circle at center, rgba(255, 232, 178, 0.7), transparent 60%),
+            radial-gradient(circle at center, rgba(186, 222, 255, 0.7), transparent 60%),
+            radial-gradient(circle at center, rgba(191, 240, 217, 0.7), transparent 60%),
+            radial-gradient(circle at center, rgba(222, 205, 255, 0.7), transparent 60%);
+          background-size: 130% 130%, 140% 140%, 150% 150%, 120% 120%, 135% 135%;
+          background-repeat: no-repeat;
+          animation: momoFlow 22s ease-in-out infinite;
         }
       `}</style>
       <main className="momo-flow-bg min-h-screen px-4 py-10 relative overflow-hidden">
@@ -1303,13 +1270,13 @@ export default function TaoGiaoDich() {
             — đổi tab không còn làm layout đổi bề rộng/giật hình nữa. */}
         <div className="max-w-5xl mx-auto relative z-10">
           <div className="flex items-center justify-between mb-6">
-            <h1 className="text-xl font-extrabold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.25)]">Tạo giao dịch</h1>
-            <Link href="/" className="text-sm text-white/70 hover:text-white transition">
+            <h1 className="text-xl font-extrabold text-neutral-800">Tạo giao dịch</h1>
+            <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-800 transition">
               ← Trang chủ
             </Link>
           </div>
 
-          <div className="flex gap-2 mb-6 bg-white/15 backdrop-blur-md rounded-xl p-1 max-w-sm w-full shadow-lg ring-1 ring-white/25">
+          <div className="flex gap-2 mb-6 bg-white/60 backdrop-blur-md rounded-xl p-1 max-w-sm w-full shadow-lg ring-1 ring-black/5">
             {TABS.map((t) => (
               <button
                 key={t.key}
@@ -1317,7 +1284,7 @@ export default function TaoGiaoDich() {
                 className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${
                   tab === t.key
                     ? 'bg-white text-momo-dark shadow-md'
-                    : 'text-white/75 hover:text-white hover:bg-white/10'
+                    : 'text-neutral-500 hover:text-neutral-800 hover:bg-white/40'
                 }`}
               >
                 {t.label}

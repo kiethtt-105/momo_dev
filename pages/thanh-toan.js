@@ -189,7 +189,7 @@ function StatusBadge({ status }) {
 // khách nhận ra ngay đây là trang thanh toán chính chủ, không phải link giả mạo.
 function BrandHeader() {
   return (
-    <div className="flex items-center justify-between gap-3 mb-5">
+    <div className="flex items-center justify-between gap-3 mb-3">
       <div className="flex items-center gap-3">
         <div className="w-11 h-11 shrink-0 rounded-2xl bg-momo flex items-center justify-center text-white font-extrabold text-lg shadow-[0_6px_16px_-6px_rgba(165,0,100,0.55)]">
           M
@@ -275,7 +275,7 @@ function InlineCopy({ value }) {
 // để tiết kiệm chiều cao màn hình, thay vì xếp từng dòng như trước.
 function OrderMeta({ order }) {
   return (
-    <div className={`bg-white rounded-2xl px-4 py-3 mb-3 flex items-center justify-between gap-3 text-sm flex-wrap ${CARD_SHADOW}`}>
+    <div className={`bg-white rounded-2xl px-4 py-2.5 mb-2 flex items-center justify-between gap-3 text-sm flex-wrap ${CARD_SHADOW}`}>
       <span className="flex items-center gap-1.5 min-w-0">
         <span className="text-stone-400 shrink-0">Mã đơn</span>
         <span className="font-mono text-stone-900 truncate">{order.orderId}</span>
@@ -292,7 +292,13 @@ function OrderMeta({ order }) {
 // Nền trang: gradient sáng, chuyển động nhẹ và nhanh — thay cho nền trắng
 // phẳng cũ (gây chói mắt). Dùng chung cho mọi màn hình (đang tải / lỗi /
 // PENDING / PAID / FAILED / EXPIRED).
-function GradientMain({ children, className = '', tight = false }) {
+function GradientMain({ children, className = '', padding = 'normal' }) {
+  const padClass =
+    padding === 'compact'
+      ? 'relative px-4 py-3 sm:py-4'
+      : padding === 'tight'
+      ? 'relative px-4 py-6 sm:py-8'
+      : 'relative px-4 py-8 sm:py-10'
   return (
     <main className={`min-h-screen relative overflow-hidden ${className}`}>
       <div className="absolute inset-0 -z-10 page-gradient-bg" />
@@ -303,14 +309,12 @@ function GradientMain({ children, className = '', tight = false }) {
           100% { background-position: 0% 50%; }
         }
         .page-gradient-bg {
-          background: linear-gradient(120deg, #fff1f6, #fff7ed, #fdf4ff, #fef2f2, #fff1f6);
+          background: linear-gradient(120deg, #ffe4ee, #ffedd5, #f3e8ff, #fee2e2, #ffe4ee);
           background-size: 320% 320%;
           animation: momoGradientMove 6s ease infinite;
         }
       `}</style>
-      <div className={tight ? 'relative px-4 py-6 sm:py-8' : 'relative px-4 py-8 sm:py-10'}>
-        {children}
-      </div>
+      <div className={padClass}>{children}</div>
     </main>
   )
 }
@@ -357,12 +361,12 @@ function TabSwitcher({ active, onChange }) {
     { key: 'transfer', label: 'Chuyển khoản thủ công' },
   ]
   return (
-    <div className="flex bg-white/70 backdrop-blur rounded-2xl p-1 mb-3 gap-1 border border-white">
+    <div className="flex bg-white/70 backdrop-blur rounded-2xl p-1 mb-2 gap-1 border border-white">
       {tabs.map((t) => (
         <button
           key={t.key}
           onClick={() => onChange(t.key)}
-          className={`flex-1 text-sm font-semibold rounded-xl py-2.5 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30 ${
+          className={`flex-1 text-sm font-semibold rounded-xl py-2 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/30 ${
             active === t.key ? 'bg-white text-momo shadow-sm' : 'text-stone-500 hover:text-stone-700'
           }`}
         >
@@ -805,22 +809,22 @@ export default function ThanhToan() {
       <Head>
         <title>Thanh toán đơn hàng · Momo Dev</title>
       </Head>
-      <GradientMain tight>
+      <GradientMain padding="compact">
         <div className="w-full max-w-md mx-auto">
           <BrandHeader />
 
           <SyncBanner message={syncMessage} />
 
           {/* Số tiền cần thanh toán — thẻ chính, chiếm trọng tâm thị giác */}
-          <div className="rounded-3xl bg-stone-900 px-5 py-5 mb-3 relative overflow-hidden shadow-[0_20px_40px_-20px_rgba(33,26,29,0.45)]">
+          <div className="rounded-2xl bg-stone-900 px-4 py-3.5 mb-2 relative overflow-hidden shadow-[0_20px_40px_-20px_rgba(33,26,29,0.45)]">
             <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full bg-momo/25 blur-2xl" />
             <div className="absolute -left-10 -bottom-12 w-40 h-40 rounded-full bg-momo/10 blur-2xl" />
             <div className="relative flex items-end justify-between gap-3 flex-wrap">
               <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400 mb-1">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400 mb-0.5">
                   {order.orderInfo || 'Số tiền cần thanh toán'}
                 </p>
-                <p className="text-3xl sm:text-4xl font-extrabold text-white tabular-nums tracking-tight">
+                <p className="text-2xl sm:text-3xl font-extrabold text-white tabular-nums tracking-tight">
                   {formatVND(order.amount)}
                 </p>
               </div>
@@ -831,7 +835,7 @@ export default function ThanhToan() {
               )}
             </div>
             {remainingMs !== null && (
-              <div className="relative h-1 w-full rounded-full bg-white/10 overflow-hidden mt-3">
+              <div className="relative h-1 w-full rounded-full bg-white/10 overflow-hidden mt-2">
                 <div
                   className={`h-full rounded-full transition-all duration-1000 ease-linear ${remainingMs < 60000 ? 'bg-rose-400' : 'bg-momo'}`}
                   style={{ width: `${progressPct}%` }}
@@ -846,21 +850,25 @@ export default function ThanhToan() {
 
           {/* Khung QR */}
           {activeTab === 'qr' && (
-            <div className={`bg-white rounded-2xl p-5 text-center flex flex-col ${CARD_SHADOW}`}>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-bold text-stone-900">Quét mã QR</h2>
+            <div className={`bg-white rounded-2xl p-3.5 text-center flex flex-col ${CARD_SHADOW}`}>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="font-bold text-stone-900 text-sm">Quét mã QR</h2>
                 <ReloadButton onClick={() => loadQr()} loading={qrLoading} label="Tải lại mã QR" />
               </div>
 
+              {/* Kích thước QR co theo chiều cao cửa sổ (vh) trước, giới hạn theo bề
+                  rộng thẻ sau — đảm bảo luôn vừa trong 1 màn hình dù cửa sổ trình
+                  duyệt thấp (nhiều thanh công cụ/bookmark như Cốc Cốc), không cần
+                  cuộn mới thấy hết mã. Ảnh gốc 350x350 nên phóng to vẫn nét. */}
               {qrSrc ? (
                 <img
                   src={qrSrc}
                   alt="Quét mã để thanh toán"
                   onError={handleQrImgError}
-                  className="w-full max-w-[320px] aspect-square object-contain mx-auto rounded-xl border border-stone-100 mb-4 bg-white"
+                  className="w-full aspect-square object-contain mx-auto rounded-xl border border-stone-100 mb-2 bg-white max-w-[min(320px,48vh,80vw)]"
                 />
               ) : qrFailed ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-14 mb-4">
+                <div className="flex flex-col items-center justify-center gap-2 py-8 mb-2">
                   <p className="text-sm text-stone-400">
                     Không tải được mã QR.
                   </p>
@@ -874,8 +882,8 @@ export default function ThanhToan() {
                   <p className="text-[11px] text-stone-300">hoặc dùng thông tin chuyển khoản ở tab bên cạnh</p>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center gap-3 mb-4">
-                  <div className="relative w-full max-w-[320px] aspect-square mx-auto">
+                <div className="flex flex-col items-center justify-center gap-2 mb-2">
+                  <div className="relative w-full aspect-square mx-auto max-w-[min(320px,48vh,80vw)]">
                     <Skeleton className="w-full h-full" />
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                       <Spinner className="w-8 h-8 border-[3px]" />
@@ -885,7 +893,7 @@ export default function ThanhToan() {
                 </div>
               )}
 
-              <p className="text-stone-500 text-sm mt-auto">
+              <p className="text-stone-500 text-xs mt-1">
                 Mở app ngân hàng bất kỳ hoặc app MoMo, quét mã QR để thanh toán
               </p>
             </div>
@@ -893,9 +901,9 @@ export default function ThanhToan() {
 
           {/* Khung thông tin chuyển khoản thủ công */}
           {activeTab === 'transfer' && (
-            <div className={`bg-white rounded-2xl p-5 flex flex-col ${CARD_SHADOW}`}>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-bold text-stone-900">Thông tin chuyển khoản</h2>
+            <div className={`bg-white rounded-2xl p-3.5 flex flex-col ${CARD_SHADOW}`}>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="font-bold text-stone-900 text-sm">Thông tin chuyển khoản</h2>
                 <ReloadButton onClick={() => loadTransferInfo()} loading={transferLoading} label="Tải lại thông tin chuyển khoản" />
               </div>
 
@@ -943,13 +951,13 @@ export default function ThanhToan() {
           <button
             onClick={handleManualCheck}
             disabled={checking}
-            className="w-full py-3.5 rounded-xl bg-momo text-white text-sm font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark hover:shadow-[0_14px_24px_-10px_rgba(165,0,100,0.7)] active:scale-[0.98] transition-all duration-200 ease-out disabled:opacity-50 mt-4 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/40"
+            className="w-full py-3 rounded-xl bg-momo text-white text-sm font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark hover:shadow-[0_14px_24px_-10px_rgba(165,0,100,0.7)] active:scale-[0.98] transition-all duration-200 ease-out disabled:opacity-50 mt-2 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/40"
           >
             {checking && <Spinner className="w-4 h-4 border-white/40 border-t-white" />}
             {checking ? 'Đang kiểm tra...' : 'Kiểm tra kết quả'}
           </button>
 
-          <div className="flex items-center justify-center gap-1.5 text-center text-stone-400 text-xs mt-3">
+          <div className="flex items-center justify-center gap-1.5 text-center text-stone-400 text-[11px] mt-2">
             {nextPollInMs !== null && (
               <span>Tự động kiểm tra lại sau {formatCountdown(nextPollInMs)}</span>
             )}
@@ -961,7 +969,9 @@ export default function ThanhToan() {
             )}
           </div>
 
-          <TrustFooter />
+          <div className="mt-1">
+            <TrustFooter />
+          </div>
         </div>
       </GradientMain>
     </>
