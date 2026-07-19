@@ -1,0 +1,6 @@
+curl -s -X POST "https://momo-dev-two.vercel.app/api/admin/system-pause" \
+  -H "x-api-key: 18e49d392cf59ae22680b3396e70c82f17a996994ef7696045dcf0215f916e9c" -H "Content-Type: application/json" \
+  -d '{"action":"on"}'
+
+curl -s "https://momo-dev-two.vercel.app/api/momo/orders"
+# kỳ vọng: 503 {"error":"Hệ thống đang tạm dừng...","paused":true}

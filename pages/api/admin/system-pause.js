@@ -36,6 +36,12 @@ import { Redis } from '@upstash/redis'
 import crypto from 'crypto'
 
 const redis = Redis.fromEnv()
+
+// Đánh dấu phiên bản code — đổi mỗi lần sửa file này. Dùng để XÁC NHẬN
+// chắc chắn qua response xem Vercel đang chạy đúng bản mới nhất hay vẫn
+// còn bản cũ (tránh nghi ngờ mơ hồ "không biết đã deploy chưa").
+const CODE_VERSION = 'v3-direct-return-2026-07-20'
+
 const REDIS_KEY = 'system:paused'
 const REDIS_META_KEY = 'system:paused:meta'
 const VALID_KEY = process.env.NEXT_PUBLIC_SYSTEM_PAUSE_KEY
@@ -96,30 +102,47 @@ export default async function handler(req, res) {
 
   if (action === 'on') {
     const reason = req.body?.reason || req.query.reason || null
-    await Promise.all([
-      redis.set(REDIS_KEY, '1'),
-      redis.set(
-        REDIS_META_KEY,
-        JSON.stringify({
-          pausedAt: new Date().toISOString(),
-          reason,
-        })
-      ),
-    ])
+    const meta = { pausedAt: new Date().toISOString(), reason }
+    await Promise.all([redis.set(REDIS_KEY, '1'), redis.set(REDIS_META_KEY, JSON.stringify(meta))])
     console.log(`[system-pause] TURNED ON by ${ip} @ ${new Date().toISOString()}${reason ? ` — lý do: ${reason}` : ''}`)
-  } else if (action === 'off') {
+    // Trả thẳng giá trị VỪA GHI, không đọc lại Redis ngay sau khi ghi.
+    // Lý do: nếu Redis là Upstash "Global" (multi-region), đọc lại ngay
+    // sau khi ghi có thể rơi vào 1 replica chưa kịp đồng bộ và trả về giá
+    // trị CŨ (đã từng xảy ra thực tế: log ghi "TURNED ON" nhưng response
+    // vẫn trả paused:false). Trả thẳng giá trị vừa set để response luôn
+    // khớp với thao tác vừa thực hiện — không phụ thuộc độ trễ đồng bộ.
+    // Lưu ý: điều này KHÔNG loại bỏ hoàn toàn rủi ro đó ở middleware.js
+    // (middleware đọc Redis độc lập, không đi qua đường này) — nếu domain
+    // đang dùng Redis Global, vẫn nên đổi sang Regional để đảm bảo
+    // middleware chặn request ngay lập tức, không trễ vài trăm ms~vài giây.
+    return res.status(200).json({ paused: true, ...meta, _version: CODE_VERSION })
+  }
+
+  if (action === 'off') {
     await Promise.all([redis.set(REDIS_KEY, '0'), redis.del(REDIS_META_KEY)])
     console.log(`[system-pause] TURNED OFF by ${ip} @ ${new Date().toISOString()}`)
+    return res.status(200).json({ paused: false, _version: CODE_VERSION })
   }
+
   // Không có action -> chỉ đọc trạng thái hiện tại, không đổi gì.
-
   const [pausedRaw, metaRaw] = await Promise.all([redis.get(REDIS_KEY), redis.get(REDIS_META_KEY)])
+  // QUAN TRỌNG: @upstash/redis SDK tự động JSON-parse giá trị đọc về, nên
+  // pausedRaw có thể là NUMBER 1 (không phải STRING '1'), và metaRaw có
+  // thể đã là OBJECT sẵn (không phải chuỗi JSON cần parse thêm). So sánh
+  // === '1' hoặc gọi JSON.parse() trên 1 object có sẵn sẽ âm thầm sai/lỗi
+  // -> đây từng là lỗi gốc khiến middleware đọc paused=false dù Redis
+  // đang thực sự là 1. Xử lý cả 2 khả năng kiểu dữ liệu cho chắc chắn.
+  const paused = pausedRaw === '1' || pausedRaw === 1
   let meta = {}
-  try {
-    meta = metaRaw ? JSON.parse(metaRaw) : {}
-  } catch {
-    meta = {}
+  if (metaRaw && typeof metaRaw === 'object') {
+    meta = metaRaw
+  } else if (typeof metaRaw === 'string') {
+    try {
+      meta = JSON.parse(metaRaw)
+    } catch {
+      meta = {}
+    }
   }
 
-  return res.status(200).json({ paused: pausedRaw === '1', ...meta })
+  return res.status(200).json({ paused, ...meta, _version: CODE_VERSION })
 }

@@ -42,10 +42,28 @@ let cachedAt = 0
 async function getPaused() {
   const now = Date.now()
   if (cachedPaused !== null && now - cachedAt < CACHE_TTL_MS) {
+    if (DEBUG) console.log(`[system-pause] CACHE HIT paused=${cachedPaused} (age=${now - cachedAt}ms)`)
     return cachedPaused
   }
   try {
-    const val = (await redis.get('system:paused')) === '1'
+    const rawVal = await redis.get('system:paused')
+    // QUAN TRỌNG: @upstash/redis SDK tự động JSON-parse giá trị đọc về.
+    // Vì "1" là JSON số hợp lệ, SDK trả về NUMBER 1, không phải STRING '1'.
+    // So sánh === '1' sẽ luôn false dù Redis đang thực sự là paused! Đây là
+    // lỗi gốc từng gây ra hiện tượng "Redis là 1 nhưng middleware đọc ra
+    // false". So sánh cả 2 kiểu để không bao giờ dính lại lỗi này.
+    const val = rawVal === '1' || rawVal === 1
+    if (DEBUG) {
+      // Log endpoint Redis đang kết nối (chỉ hostname, KHÔNG log token) và
+      // giá trị thô đọc được -> để xác nhận middleware có đang đọc đúng
+      // cùng 1 Redis instance với route system-pause.js hay không (vd nếu
+      // env var bị lệch giữa 2 nơi, hostname sẽ khác nhau rõ ràng ở đây).
+      let host = 'unknown'
+      try {
+        host = new URL(process.env.UPSTASH_REDIS_REST_URL || '').host
+      } catch {}
+      console.log(`[system-pause] REDIS GET host=${host} rawVal=${JSON.stringify(rawVal)} typeof=${typeof rawVal} -> paused=${val}`)
+    }
     cachedPaused = val
     cachedAt = now
     return val
