@@ -13,6 +13,7 @@ export default async function handler(req, res) {
   if (!requireAdmin(req, res)) return
 
   const orderId = (req.body?.orderId || '').toString().trim()
+  console.log(`[cancel] POST orderId=${orderId || '(thiếu)'} @ ${new Date().toISOString()}`)
   if (!orderId) return res.status(400).json({ error: 'Thiếu orderId' })
 
   try {
@@ -33,6 +34,7 @@ export default async function handler(req, res) {
     }
 
     await saveOrder(orderId, order)
+    console.log(`[cancel] ${orderId} → đã hủy`)
     return res.status(200).json(order)
   } catch (err) {
     console.error('[cancel] Lỗi:', err.message)

@@ -64,6 +64,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
+  // GET dùng cho Shortcuts/mở link nhanh — mỗi lần gọi phải tạo đơn MỚI,
+  // tuyệt đối không để CDN cache trả lại kết quả của lần gọi trước.
+  if (req.method === 'GET') res.setHeader('Cache-Control', 'no-store')
+
   // POST chấp nhận 1 trong 2 cách xác thực:
   //  - API key (SHORTCUT_API_KEY) — dùng cho Shortcuts/tích hợp ngoài
   //  - Session admin (cookie đã đăng nhập) — dùng cho trang quản lý nội bộ,
@@ -77,6 +81,7 @@ export default async function handler(req, res) {
 
   const params = req.method === 'GET' ? req.query : req.body
   const mode = (params.mode || 'p2p').toString().trim().toLowerCase()
+  console.log(`[create] ${req.method} mode=${mode} amount=${params.amount || '(thiếu)'} isAdmin=${isAdmin} @ ${new Date().toISOString()}`)
 
   if (req.method === 'GET' && mode !== 'p2p') {
     return res.status(400).json({ error: 'GET chỉ hỗ trợ mode=p2p' })
@@ -156,6 +161,7 @@ async function handleP2P(params, res) {
       type: 'p2p',
     })
 
+    console.log(`[create][p2p] OK orderId=${orderId} amount=${amt} store=${storeId}`)
     return res.status(200).json({
       payUrl: result.payUrl, deeplink: result.deeplink, qrCodeUrl: result.qrCodeUrl,
       qrCodeImage, orderId: result.orderId, requestId: result.requestId, storeId, storeName,

@@ -7,6 +7,7 @@ export default async function handler(req, res) {
   if (!requireAdmin(req, res)) return
 
   const { orderId } = req.body
+  console.log(`[delete] DELETE orderId=${orderId || '(thiếu)'} @ ${new Date().toISOString()}`)
   if (!orderId) return res.status(400).json({ error: 'Thiếu orderId' })
 
   try {

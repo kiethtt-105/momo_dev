@@ -33,6 +33,8 @@ export default async function handler(req, res) {
   }
 
   const orderId = (req.query.orderId || '').toString().trim()
+  res.setHeader('Cache-Control', 'no-store') // token phải luôn mới, không cho cache
+  console.log(`[guest-check-token] GET orderId=${orderId || '(thiếu)'} @ ${new Date().toISOString()}`)
   if (!orderId) {
     return res.status(400).json({ error: 'Thiếu orderId' })
   }
@@ -55,6 +57,7 @@ export default async function handler(req, res) {
       existing.issuedAt &&
       now - existing.issuedAt < REISSUE_COOLDOWN_MS
     ) {
+      console.log(`[guest-check-token] ${orderId} → tái dùng token cũ (cooldown)`)
       return res.status(200).json({ token: existing.token, expiresAt: existing.expiresAt })
     }
 
@@ -66,6 +69,7 @@ export default async function handler(req, res) {
       guestCheckToken: { token, issuedAt: now, expiresAt, used: false },
     })
 
+    console.log(`[guest-check-token] ${orderId} → cấp token mới, hết hạn sau ${TOKEN_TTL_MS / 1000}s`)
     return res.status(200).json({ token, expiresAt })
   } catch (err) {
     console.error('[guest-check-token] Lỗi:', err)

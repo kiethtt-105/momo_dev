@@ -12,9 +12,16 @@ export default function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
+  res.setHeader('Cache-Control', 'no-store')
+  console.log(`[stores] GET @ ${new Date().toISOString()}`)
+
   const ok = requireAdmin(req, res)
-  if (!ok) return
+  if (!ok) {
+    console.log('[stores] Chặn: chưa đăng nhập admin')
+    return
+  }
 
   const stores = getStores().map(({ id, name, default: isDefault }) => ({ id, name, default: isDefault }))
+  console.log(`[stores] → trả ${stores.length} cửa hàng`)
   return res.status(200).json({ stores })
 }

@@ -42,11 +42,18 @@ function toGuestOrder(o) {
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
 
+  // QUAN TRỌNG: route này được FE poll liên tục (dashboard, /thanh-toan) —
+  // thiếu no-store thì Vercel Edge Cache có thể trả 304 thẳng từ cache,
+  // request KHÔNG chạm tới middleware/function nữa (đã xác nhận qua log
+  // thấy /api/momo/orders trả 304 liên tục dù server đang paused).
+  res.setHeader('Cache-Control', 'no-store')
+
+  const { orderId } = req.query
+  console.log(`[orders] GET orderId=${orderId || '(danh sách)'} @ ${new Date().toISOString()}`)
+
   try {
     const isAdmin = verifySession(req)
     if (isAdmin) refreshSession(req, res)
-
-    const { orderId } = req.query
 
     if (!isAdmin && !orderId) {
       return res.status(401).json({ error: 'Chưa đăng nhập hoặc session hết hạn' })
@@ -63,6 +70,7 @@ export default async function handler(req, res) {
       orders = orders.map(toGuestOrder)
     }
 
+    console.log(`[orders] → trả ${orders.length} đơn (isAdmin=${isAdmin})`)
     return res.status(200).json({ orders, total: orders.length })
   } catch (err) {
     console.error('[orders] Lỗi:', err)

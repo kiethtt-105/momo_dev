@@ -13,6 +13,7 @@ export default async function handler(req, res) {
 
   }
 
+  console.log(`[ipn] Nhận request @ ${new Date().toISOString()}`)
   const body = req.body
   console.log('[MoMo IPN] Body nhận được:', JSON.stringify(body))   // ← thêm dòng này
 

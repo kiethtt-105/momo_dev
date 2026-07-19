@@ -53,8 +53,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
+  // Route hỏi trạng thái real-time — không được cache dù là GET.
+  res.setHeader('Cache-Control', 'no-store')
+
   const params = req.method === 'GET' ? req.query : req.body
   const orderId = (params.orderId || '').toString().trim()
+  console.log(`[query] ${req.method} orderId=${orderId} @ ${new Date().toISOString()}`)
   if (!orderId) {
     return res.status(400).json({ error: 'Thiếu orderId' })
   }
@@ -80,6 +84,7 @@ export default async function handler(req, res) {
     const resultCode = parseInt(data.resultCode)
     const isPaid = resultCode === 0
     const isStillPending = PENDING_RESULT_CODES.has(resultCode)
+    console.log(`[query] ${orderId} → resultCode=${resultCode} isPaid=${isPaid} isStillPending=${isStillPending}`)
 
     const prev = prevForGuest || await getOrder(orderId)
     let syncedStatus = prev?.status || null

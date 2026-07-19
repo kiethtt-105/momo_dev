@@ -50,6 +50,7 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
   const orderId = (req.query.orderId || '').toString().trim()
+  console.log(`[transfer-info] GET orderId=${orderId || '(thiếu)'} refresh=${req.query.refresh === '1'} @ ${new Date().toISOString()}`)
   if (!orderId) return res.status(400).json({ error: 'Thiếu orderId' })
 
   const order = await getOrder(orderId)
@@ -62,6 +63,7 @@ export default async function handler(req, res) {
   // hoặc nghi ngờ dữ liệu cũ sai).
   if (order.vietqr && !refresh) {
     res.setHeader('Cache-Control', 'no-store')
+    console.log(`[transfer-info] ${orderId} → trả từ cache (order.vietqr)`)
     return res.status(200).json({ orderId, ...order.vietqr, cached: true })
   }
 
@@ -95,9 +97,10 @@ export default async function handler(req, res) {
     await saveOrder(orderId, { ...order, vietqr })
 
     res.setHeader('Cache-Control', 'no-store')
+    console.log(`[transfer-info] ${orderId} → decode mới OK, bank=${bank?.shortName || bank?.name || '?'}`)
     return res.status(200).json({ orderId, ...vietqr, cached: false })
   } catch (err) {
-    console.error('[transfer-info] error:', err)
+    console.error(`[transfer-info] ${orderId} → Lỗi:`, err.message)
     return res.status(err.status || 500).json({ error: err.publicMessage || err.message || 'Không đọc được thông tin ngân hàng từ mã QR' })
   }
 }

@@ -879,6 +879,11 @@ function ScanSection({ stores, storeId, setStoreId }) {
   )
 }
 
+// Khoảng thời gian tự kiểm tra lại trạng thái paused (kể cả khi không có
+// thao tác gì) — để nếu bị dừng từ nơi khác (tab khác, người khác bấm),
+// trang tự cập nhật mà không cần F5.
+const PAUSE_POLL_INTERVAL_MS = 15000
+
 // ─── Export default: trang chủ hợp nhất ──────────────────────────────────────
 export default function Home() {
   // ── Pause state ──
@@ -900,14 +905,40 @@ export default function Home() {
   useEffect(() => { saveCache(CACHE_KEY_TAB, tab) }, [tab])
   const { stores, storeId, setStoreId } = useStores()
 
+  // ── Đồng bộ tức thời khi BẤT KỲ API call nào (form tạo giao dịch, kiểm
+  // tra trạng thái, load stores...) bị middleware chặn 503. Không cần sửa
+  // từng chỗ gọi fetch rải rác trong file — chặn ở đúng 1 chỗ bằng cách
+  // "bọc" window.fetch lại. Nhờ vậy khi hệ thống bị dừng giữa chừng, TOÀN
+  // TRANG chuyển sang PausedScreen ngay lập tức thay vì chỉ hiện lỗi nhỏ ở
+  // 1 form còn phần còn lại của trang vẫn tưởng đang hoạt động bình thường.
+  useEffect(() => {
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = async (...args) => {
+      const res = await originalFetch(...args)
+      if (res.status === 503) {
+        try {
+          const clone = res.clone()
+          const data = await clone.json()
+          if (data?.paused) setPauseState((cur) => (cur?.paused ? cur : data))
+        } catch { /* response không phải JSON paused, bỏ qua */ }
+      }
+      return res
+    }
+    return () => { window.fetch = originalFetch }
+  }, [])
+
   // ── Fetch pause state ──
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/admin/system-pause?key=${encodeURIComponent(SYSTEM_PAUSE_KEY || '')}`)
-      .then((res) => res.json())
-      .then((data) => { if (!cancelled) setPauseState(data) })
-      .catch(() => { if (!cancelled) setPauseState({ paused: false }) })
-    return () => { cancelled = true }
+    function checkPauseState() {
+      fetch(`/api/admin/system-pause?key=${encodeURIComponent(SYSTEM_PAUSE_KEY || '')}`)
+        .then((res) => res.json())
+        .then((data) => { if (!cancelled) setPauseState(data) })
+        .catch(() => { if (!cancelled) setPauseState((cur) => cur || { paused: false }) })
+    }
+    checkPauseState()
+    const id = setInterval(checkPauseState, PAUSE_POLL_INTERVAL_MS)
+    return () => { cancelled = true; clearInterval(id) }
   }, [])
 
   // ── Fetch orders (chỉ khi không paused) ──

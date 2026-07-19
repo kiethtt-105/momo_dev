@@ -23,6 +23,8 @@ export const config = {
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
+  console.log(`[qr-extract] GET orderId=${req.query.orderId || '(warm)'} warm=${req.query.warm === '1'} @ ${new Date().toISOString()}`)
+
   if (req.query.warm === '1') {
     try {
       await getBrowser()
@@ -65,8 +67,10 @@ export default async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('X-QR-Cache', result.fromCache ? 'HIT' : 'MISS')
     res.setHeader('X-QR-Source', 'dom-datauri')
+    console.log(`[qr-extract] ${orderId} → OK (cache=${result.fromCache ? 'HIT' : 'MISS'})`)
     return res.status(200).send(result.buffer)
   } catch (err) {
+    console.error(`[qr-extract] ${orderId} → Lỗi:`, err.message)
     return res.status(err.status || 500).json({ error: err.publicMessage || err.message || 'Lỗi không xác định' })
   }
 }
