@@ -23,7 +23,7 @@
 //            nằm trên URL vì bị log lại nhiều nơi.)
 
 import QRCode from 'qrcode'
-import { createMoMoPayment, createMoMoPOSPayment, isMomoConfigured } from '../../../lib/momo'
+import { createMoMoPayment, createMoMoPOSPayment, isMomoConfigured, queryMoMoTransaction } from '../../../lib/momo'
 import { resolveStore } from '../../../lib/stores'
 import { saveOrder } from '../../../lib/orders'
 import { describeResultCode, formatResultCodeMessage } from '../../../lib/momoResultCodes'
@@ -57,6 +57,11 @@ const ORDER_EXPIRE_MS = 10 * 60 * 1000
 function buildExpiresAt(createdAtIso) {
   return new Date(new Date(createdAtIso).getTime() + ORDER_EXPIRE_MS).toISOString()
 }
+
+// Giống hệt logic trong query.js: resultCode MoMo dùng để báo "giao dịch
+// chưa có kết quả dứt khoát" — KHÔNG được coi là FAILED thật, cũng không
+// đủ căn cứ để coi là kết quả cuối cùng khi requery sau lỗi mạng.
+const PENDING_RESULT_CODES = new Set([1000, 7002])
 
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -168,20 +173,53 @@ async function handleP2P(params, res) {
       expiresAt,
     })
   } catch (err) {
-    console.error('[create][p2p] error:', err)
+    console.error(`[create][p2p] Lỗi khi gọi MoMo (orderId=${orderId}):`, err)
+
+    // MoMo có thể đã xử lý xong giao dịch phía họ dù response bị rớt giữa
+    // đường (lỗi network chỉ đứt lúc NHẬN kết quả, không có nghĩa giao dịch
+    // thất bại) — thử hỏi lại NGAY bằng Query Transaction Status trước khi
+    // chấp nhận để đơn ở trạng thái không rõ ràng. Chỉ ghi Redis nếu MoMo
+    // trả resultCode DỨT KHOÁT thật (không phải "đang xử lý") — không tự
+    // chế bất kỳ resultCode nào ở đây.
     try {
-      await saveOrder(orderId, {
-        orderId, amount: amt, orderInfo, status: 'FAILED',
-        createdAt: now, expiresAt, orderExpireMs: ORDER_EXPIRE_MS, paidAt: null, transId: '', payType: '',
-        paymentOption: '', source: 'create-p2p',
-        storeId, storeName, partnerName, error: 'server_error',
-        message: `⚠ Lỗi hệ thống (server) khi gọi MoMo — ADMIN cần kiểm tra log server: ${err.message || 'không rõ nguyên nhân'}`,
-        type: 'p2p',
-      })
-    } catch (cleanupErr) {
-      console.error('[create][p2p] cleanup error:', cleanupErr)
+      const queried = await queryMoMoTransaction({ orderId })
+      const qCode = parseInt(queried.resultCode)
+      if (!Number.isNaN(qCode) && !PENDING_RESULT_CODES.has(qCode)) {
+        const isPaid = qCode === 0
+        const finalMessage = isPaid
+          ? (queried.message || 'Thanh toán thành công')
+          : formatResultCodeMessage(qCode, queried.message)
+        await saveOrder(orderId, {
+          orderId, amount: amt, orderInfo, status: isPaid ? 'PAID' : 'FAILED',
+          createdAt: now, expiresAt, orderExpireMs: ORDER_EXPIRE_MS,
+          paidAt: isPaid ? new Date().toISOString() : null,
+          transId: queried.transId?.toString() || '', payType: queried.payType || '',
+          paymentOption: queried.paymentOption || '', source: 'create-p2p-requery',
+          storeId, storeName, partnerName,
+          resultCode: qCode, message: finalMessage,
+          responseTime: queried.responseTime || null,
+          type: 'p2p',
+        })
+        console.log(`[create][p2p] Requery sau lỗi mạng THÀNH CÔNG orderId=${orderId} resultCode=${qCode}`)
+        return res.status(isPaid ? 200 : 400).json({
+          orderId, resultCode: qCode,
+          ...(isPaid ? { message: finalMessage } : { error: finalMessage }),
+        })
+      }
+      // qCode NaN hoặc vẫn "đang xử lý" (1000/7002) -> chưa đủ căn cứ,
+      // rơi xuống nhánh giữ nguyên PENDING bên dưới.
+    } catch (queryErr) {
+      console.error(`[create][p2p] Requery sau lỗi mạng cũng thất bại (orderId=${orderId}):`, queryErr)
     }
-    return res.status(500).json({ error: 'Lỗi server, thử lại sau' })
+
+    // Không lấy được resultCode dứt khoát (kể cả sau khi thử hỏi lại MoMo)
+    // -> KHÔNG xoá, KHÔNG tự chế FAILED. Bản ghi PENDING đã lưu ở trên vẫn
+    // còn nguyên trong Redis (TTL 30 ngày) — xem được trong dashboard hoặc
+    // đối soát tay bằng /api/momo/query?orderId=... bất cứ lúc nào.
+    return res.status(500).json({
+      error: 'Không nhận được kết quả dứt khoát từ MoMo. Đơn hàng vẫn được giữ ở trạng thái PENDING — vui lòng kiểm tra lại bằng mã đơn hàng trước khi tạo giao dịch mới',
+      orderId,
+    })
   }
 }
 
@@ -241,27 +279,53 @@ async function handleScan(params, res) {
     console.log(`[create][scan] MoMo response: ${orderId} resultCode=${data.resultCode} message=${data.message}`)
     return res.status(200).json(data)
   } catch (err) {
-    console.error('[create][scan] error:', err)
     const isTimeout = err.name === 'TimeoutError' || err.name === 'AbortError'
     const isBadJson = err.code === 'MOMO_BAD_JSON'
+    console.error(`[create][scan] Lỗi khi gọi MoMo (orderId=${orderId}):`, err)
+
+    // Đặc biệt quan trọng với POS: timeout/lỗi JSON không có nghĩa MoMo
+    // chưa charge — có thể họ đã trừ tiền khách thành công nhưng response
+    // bị rớt. Thử hỏi lại NGAY bằng Query Transaction Status trước khi kết
+    // luận. `resultCode: -1` tự chế ở bản cũ đã bị bỏ hẳn — chỉ ghi Redis
+    // khi có resultCode DỨT KHOÁT thật từ MoMo.
     try {
-      await saveOrder(orderId, {
-        orderId, amount: amt, orderInfo, status: 'FAILED',
-        createdAt: now, paidAt: null, transId: '', payType: 'pos', paymentOption: '',
-        resultCode: -1,
-        message: isTimeout
-          ? '⚠ Lỗi hệ thống MoMo — Timeout khi gọi MoMo (15s), không rõ giao dịch có được xử lý phía MoMo hay không. Kiểm tra lại bằng mã đơn hàng trước khi tạo lại.'
-          : isBadJson
-          ? '⚠ Lỗi hệ thống MoMo — MoMo trả về dữ liệu không hợp lệ (không phải JSON). Thử lại sau, nếu lặp lại nhiều lần thì liên hệ MoMo.'
-          : `⚠ Lỗi hệ thống (server) — ADMIN cần kiểm tra log server: ${err.message || 'Lỗi server'}`,
-        source: 'pos', storeId: store.id, storeName: store.name, partnerName: store.partnerName || '',
-        type: 'scan', submittedCode: paymentCode,
-      })
-    } catch (redisErr) {
-      console.error('[create][scan] Redis update FAILED error:', redisErr)
+      const queried = await queryMoMoTransaction({ orderId })
+      const qCode = parseInt(queried.resultCode)
+      if (!Number.isNaN(qCode) && !PENDING_RESULT_CODES.has(qCode)) {
+        const isPaid = qCode === 0
+        const finalMessage = isPaid
+          ? (queried.message || 'Thanh toán thành công')
+          : formatResultCodeMessage(qCode, queried.message)
+        await saveOrder(orderId, {
+          orderId, amount: amt, orderInfo,
+          status: isPaid ? 'PAID' : 'FAILED',
+          createdAt: now, paidAt: isPaid ? new Date().toISOString() : null,
+          transId: queried.transId?.toString() || '', payType: queried.payType || 'pos',
+          paymentOption: queried.paymentOption || '', resultCode: qCode,
+          message: finalMessage, responseTime: queried.responseTime || null,
+          source: 'pos-requery', storeId: store.id, storeName: store.name, partnerName: store.partnerName || '',
+          type: 'scan', submittedCode: paymentCode,
+        })
+        console.log(`[create][scan] Requery sau lỗi mạng THÀNH CÔNG orderId=${orderId} resultCode=${qCode}`)
+        return res.status(isPaid ? 200 : 400).json({
+          orderId, resultCode: qCode,
+          ...(isPaid ? { message: finalMessage } : { error: finalMessage }),
+        })
+      }
+    } catch (queryErr) {
+      console.error(`[create][scan] Requery sau lỗi mạng cũng thất bại (orderId=${orderId}):`, queryErr)
     }
+
+    // Không lấy được resultCode dứt khoát -> KHÔNG xoá, KHÔNG tự chế FAILED.
+    // Bản ghi PENDING đã lưu ở trên vẫn còn nguyên — bắt buộc kiểm tra lại
+    // bằng /api/momo/query trước khi thu tiền lại của khách.
     return res.status(isTimeout ? 504 : 500).json({
-      error: isTimeout ? 'Timeout khi gọi MoMo, vui lòng thử lại' : 'Lỗi server khi xử lý thanh toán',
+      error: isTimeout
+        ? 'Timeout khi gọi MoMo — CHƯA RÕ giao dịch có thành công phía MoMo hay không. Vui lòng kiểm tra lại bằng mã đơn hàng (query) trước khi thu tiền lại của khách.'
+        : isBadJson
+        ? 'MoMo trả về dữ liệu không hợp lệ, vui lòng kiểm tra lại đơn hàng trước khi thử lại'
+        : 'Lỗi server khi xử lý thanh toán, vui lòng kiểm tra lại đơn hàng trước khi thử lại',
+      orderId,
     })
   }
 }
