@@ -14,10 +14,24 @@ import { listOrders } from '../../../lib/orders'
 import { verifySession, refreshSession } from '../admin/login'
 
 // Field khách (không session admin) được xem — mở rộng thêm so với trước
-// (orderInfo, amount, paidAt, transId, storeName, aio_qr) để trang
-// /thanh-toan hiển thị đủ thông tin. Vẫn KHÔNG lộ các field nội bộ khác
-// (payType, promotionInfo, partnerCode, requestId, guestCheckToken...).
-const GUEST_FIELDS = ['orderId', 'orderInfo', 'amount', 'status', 'paidAt', 'transId', 'storeName', 'aio_qr']
+// (orderInfo, amount, paidAt, transId, storeName, aio_qr, createdAt, message)
+// để trang /thanh-toan hiển thị đủ thông tin.
+//
+// LƯU Ý: createdAt BẮT BUỘC phải có trong danh sách này — pages/thanh-toan.js
+// dùng order.createdAt để tính đồng hồ đếm ngược 10 phút (ORDER_EXPIRE_MS).
+// Thiếu field này thì khách sẽ không thấy đếm ngược dù đơn vẫn còn hạn.
+//
+// TUYỆT ĐỐI KHÔNG thêm các field sau vào danh sách này, dù chúng là field
+// "liên quan đến đơn hàng":
+//   - guestCheckToken, expiresAt, issuedAt: đây CHÍNH LÀ token dùng để xác
+//     thực lệnh gọi /api/momo/query. Lộ 3 field này qua route orders.js
+//     đồng nghĩa ai cũng đọc được token trực tiếp mà không cần xin qua
+//     /api/momo/guest-check-token — vô hiệu hoá hoàn toàn lớp bảo vệ đó.
+//   - vietqr, payType: dữ liệu nội bộ do MoMo trả về (vietqr chứa
+//     accountNumber/serviceCode gốc). Phần khách cần để chuyển khoản thủ
+//     công đã có route riêng /api/momo/transfer-info lược field đúng mức,
+//     không nên lộ nguyên object vietqr qua đây.
+const GUEST_FIELDS = ['orderId', 'orderInfo', 'amount', 'status', 'createdAt', 'paidAt', 'transId', 'storeName', 'aio_qr', 'message']
 
 function toGuestOrder(o) {
   const out = {}
@@ -54,4 +68,4 @@ export default async function handler(req, res) {
     console.error('[orders] Lỗi:', err)
     return res.status(500).json({ error: 'Lỗi máy chủ' })
   }
-} 
+}

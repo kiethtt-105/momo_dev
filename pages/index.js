@@ -82,6 +82,71 @@ function SidebarStat({ label, value, dot }) {
   )
 }
 
+// Công tắc dừng toàn hệ thống — gọi /api/admin/system-pause bằng API key
+// riêng (KHÔNG phải session admin, xem giải thích trong file API route),
+// key lấy từ NEXT_PUBLIC_SYSTEM_PAUSE_KEY (được nhúng sẵn vào bundle lúc
+// build nên gọi được thẳng từ trình duyệt, không cần đăng nhập lại lần 2).
+const SYSTEM_PAUSE_KEY = process.env.NEXT_PUBLIC_SYSTEM_PAUSE_KEY
+
+function SystemPauseToggle() {
+  const [paused, setPaused] = useState(null) // null = đang tải, chưa biết
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/admin/system-pause?key=${encodeURIComponent(SYSTEM_PAUSE_KEY || '')}`)
+      .then((res) => res.json())
+      .then((data) => { if (!cancelled) setPaused(!!data.paused) })
+      .catch(() => { if (!cancelled) setPaused(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  async function toggle() {
+    const nextAction = paused ? 'off' : 'on'
+    if (nextAction === 'on') {
+      const ok = window.confirm(
+        'Dừng TOÀN BỘ hệ thống? Mọi API sẽ ngừng phục vụ ngay lập tức (khách không tạo/kiểm tra được giao dịch nào) cho tới khi bạn bật lại.'
+      )
+      if (!ok) return
+    }
+    setBusy(true)
+    try {
+      const res = await fetch('/api/admin/system-pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': SYSTEM_PAUSE_KEY || '' },
+        body: JSON.stringify({ action: nextAction }),
+      })
+      const data = await res.json()
+      if (res.ok) setPaused(!!data.paused)
+      else window.alert(data.error || 'Không đổi được trạng thái hệ thống.')
+    } catch {
+      window.alert('Lỗi mạng, thử lại sau.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="relative mb-6 rounded-2xl bg-white/[0.06] px-4 py-3.5">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="flex items-center gap-2 text-xs font-medium text-stone-300">
+          <span className={`w-1.5 h-1.5 rounded-full ${paused ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+          {paused === null ? 'Đang kiểm tra...' : paused ? 'Hệ thống đang TẠM DỪNG' : 'Hệ thống đang chạy'}
+        </span>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={busy || paused === null}
+        className={`w-full py-2 rounded-xl text-xs font-semibold transition disabled:opacity-50 ${
+          paused ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-rose-500/90 text-white hover:bg-rose-500'
+        }`}
+      >
+        {busy ? 'Đang xử lý...' : paused ? 'Bật lại hệ thống' : 'Dừng toàn hệ thống'}
+      </button>
+    </div>
+  )
+}
+
 function StatCard({ label, value, accent }) {
   return (
     <div className="rounded-2xl bg-white px-5 py-4 shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)]">
@@ -191,6 +256,9 @@ export default function Home() {
       <Head>
         <title>Momo Dev</title>
         <meta name="description" content="Cổng thanh toán MoMo" />
+        {/* Logo ứng dụng — file đặt sẵn tại public/main.jpg, Next.js tự
+            serve mọi thứ trong public/ ở đường dẫn gốc "/". */}
+        <link rel="icon" href="/main.jpg" />
       </Head>
 
       <div className="min-h-screen bg-[#FAF7F5] lg:flex">
@@ -200,9 +268,11 @@ export default function Home() {
           <div className="absolute -left-20 bottom-0 w-56 h-56 rounded-full bg-momo/10 blur-3xl pointer-events-none" />
 
           <div className="relative flex items-center gap-3 mb-8">
-            <div className="w-11 h-11 shrink-0 rounded-2xl bg-momo flex items-center justify-center text-white font-extrabold text-lg shadow-[0_6px_16px_-6px_rgba(165,0,100,0.55)]">
-              M
-            </div>
+            <img
+              src="/main.jpg"
+              alt="Momo Dev"
+              className="w-11 h-11 shrink-0 rounded-2xl object-cover shadow-[0_6px_16px_-6px_rgba(165,0,100,0.55)]"
+            />
             <div>
               <h1 className="text-lg font-extrabold leading-tight tracking-tight">Momo Dev</h1>
               <p className="text-stone-400 text-xs">
@@ -210,6 +280,8 @@ export default function Home() {
               </p>
             </div>
           </div>
+
+          <SystemPauseToggle />
 
           <div className="relative flex flex-col sm:flex-row lg:flex-col gap-3 mb-8">
             <Link

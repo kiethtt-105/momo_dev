@@ -1,6 +1,7 @@
 // pages/api/admin/login.js
 
 import crypto from 'crypto'
+import { resumeSystem } from '../../../lib/systemPause'
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
 // KHÔNG fallback về chuỗi cứng nữa — nếu thiếu env, ai đọc được source (hoặc
@@ -126,7 +127,7 @@ export function refreshSession(req, res) {
   return true
 }
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   if (!ADMIN_PASSWORD) {
@@ -158,6 +159,17 @@ export default function handler(req, res) {
       process.env.NODE_ENV === 'production' ? '; Secure' : ''
     }`,
   ])
+
+  // Đăng nhập thành công -> nếu hệ thống đang bị tạm dừng (do trước đó
+  // admin bấm "Tạm dừng" để tiết kiệm tài nguyên) thì MỞ LẠI NGAY tại
+  // đây — đúng tinh thần "tạm dừng cho tới khi có ai login lại", không
+  // cần thêm nút/API "mở lại" riêng nào khác. Lỗi ở bước này (Redis tạm
+  // thời lỗi...) không nên chặn luôn cả việc đăng nhập, nên chỉ log lại.
+  try {
+    await resumeSystem()
+  } catch (err) {
+    console.error('[admin/login] resumeSystem lỗi (không chặn đăng nhập):', err)
+  }
 
   return res.status(200).json({ ok: true, ip, device: deviceLabel })
 }

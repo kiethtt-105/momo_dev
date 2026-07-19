@@ -1219,6 +1219,61 @@ function ScanSection({ stores, storeId, setStoreId }) {
   )
 }
 
+// Nút "Tạm dừng toàn bộ hệ thống" — gọi POST /api/momo/system-pause.
+// Sau khi tạm dừng thành công, CHÍNH trang admin đang đứng đây cũng sẽ bị
+// middleware chặn ngay từ request kế tiếp (xem middleware.js) — nên chỉ
+// cần reload lại trang, nó tự động bị đá về màn đăng nhập giống mọi trang
+// khác, không cần code thêm logic điều hướng riêng ở đây.
+function PauseSystemButton() {
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [pausing, setPausing] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handlePause() {
+    setPausing(true)
+    setError('')
+    try {
+      const res = await fetch('/api/momo/system-pause', { method: 'POST', credentials: 'include' })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error || 'Không tạm dừng được, thử lại sau')
+        setPausing(false)
+        return
+      }
+      window.location.reload()
+    } catch {
+      setError('Lỗi kết nối, thử lại sau')
+      setPausing(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end">
+      <button
+        type="button"
+        onClick={() => setConfirmOpen(true)}
+        title="Tạm dừng toàn bộ hệ thống để tiết kiệm tài nguyên"
+        className="text-sm text-neutral-500 hover:text-red-600 transition"
+      >
+        ⏸ Tạm dừng hệ thống
+      </button>
+      {error && <p className="text-[11px] text-red-600 mt-0.5">{error}</p>}
+
+      <ConfirmModal
+        open={confirmOpen}
+        title="Tạm dừng toàn bộ hệ thống?"
+        description="Trang khách (thanh toán) và mọi thao tác admin — kể cả chính bạn — sẽ bị chặn hết ngay lập tức. Chỉ hoạt động lại khi có ai đăng nhập admin lần nữa."
+        confirmLabel={pausing ? 'Đang tạm dừng...' : 'Tạm dừng ngay'}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => {
+          setConfirmOpen(false)
+          handlePause()
+        }}
+      />
+    </div>
+  )
+}
+
 export default function TaoGiaoDich() {
   // Khôi phục lại tab đang xem từ cache — F5 xong vẫn ở đúng tab vừa
   // đứng, không bị nhảy về P2P mặc định.
