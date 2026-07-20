@@ -1,18 +1,15 @@
 // pages/index.js
 //
-// Hợp nhất trang chủ (dashboard thống kê) và trang tạo giao dịch thành
-// 1 trang duy nhất. Phần trên là dashboard (StatCard, biểu đồ 7 ngày,
-// nút điều khiển hệ thống). Phần dưới là 2 tab tạo giao dịch (P2P / Scan).
+// Trang tạo giao dịch (P2P / Scan) + nút điều khiển hệ thống. Phần thống
+// kê dashboard đã được bỏ, chỉ còn phần tạo giao dịch.
 //
 // Luồng khoá khi paused giữ nguyên: kiểm tra /api/admin/system-pause
 // TRƯỚC, paused thì khoá toàn trang, không gọi thêm API nào khác.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Head from 'next/head'
 import jsQR from 'jsqr'
 
-const currency = new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 })
-const WEEKDAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 const CARD_SHADOW = 'shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)]'
 const SYSTEM_PAUSE_KEY = process.env.NEXT_PUBLIC_SYSTEM_PAUSE_KEY
 
@@ -54,29 +51,6 @@ const CACHE_KEY_TAB = 'momo_tao_gd_tab_v1'
 const CACHE_KEY_STORES = 'momo_tao_gd_stores_v1'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function isSameDay(a, b) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
-}
-function isToday(iso) {
-  if (!iso) return false
-  return isSameDay(new Date(iso), new Date())
-}
-function last7Days(orders) {
-  const now = new Date()
-  const days = []
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(now)
-    d.setDate(d.getDate() - i)
-    days.push(d)
-  }
-  return days.map((d) => {
-    const revenue = orders
-      .filter((o) => o.status === 'PAID' && isSameDay(new Date(o.createdAt), d))
-      .reduce((sum, o) => sum + (parseInt(o.amount) || 0), 0)
-    return { label: WEEKDAY_LABELS[d.getDay()], revenue, isToday: isSameDay(d, now) }
-  })
-}
-
 function loadCache(key, fallback) {
   if (typeof window === 'undefined') return fallback
   try {
@@ -261,20 +235,6 @@ function IconLinkRow({ label, value, href }) {
 }
 
 // ─── Dashboard components ─────────────────────────────────────────────────────
-function StatCard({ label, value, accent, dot }) {
-  return (
-    <div className={`rounded-2xl bg-white px-5 py-4 ${CARD_SHADOW}`}>
-      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-stone-400 mb-1.5">
-        {dot && <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />}
-        {label}
-      </p>
-      <p className={`text-2xl font-extrabold tabular-nums ${accent === 'amber' ? 'text-amber-600' : 'text-stone-900'}`}>
-        {value}
-      </p>
-    </div>
-  )
-}
-
 function SystemStatusChip({ busy, onPause }) {
   return (
     <button
@@ -572,7 +532,6 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
       {showPayInfo && (
         <div className="w-full flex flex-col gap-2 mt-3">
           <IconLinkRow label="Trang thanh toán (gửi cho khách)" value={thanhToanUrl} href={thanhToanUrl} />
-          {tx.payUrl && <IconLinkRow label="Mở thẳng trong ứng dụng MoMo" value={tx.payUrl} href={tx.payUrl} />}
         </div>
       )}
       {status !== 'PAID' && status !== 'FAILED' && (
@@ -940,10 +899,6 @@ export default function Home() {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
   const [toast, setToast] = useState('')
 
-  // ── Orders cho dashboard ──
-  const [orders, setOrders] = useState(null)
-  const [dashError, setDashError] = useState(null)
-
   // ── Tab tạo giao dịch ──
   const [tab, setTab] = useState(() => {
     const cached = loadCache(CACHE_KEY_TAB, 'p2p')
@@ -988,17 +943,6 @@ export default function Home() {
     return () => { cancelled = true; clearInterval(id) }
   }, [])
 
-  // ── Fetch orders (chỉ khi không paused) ──
-  useEffect(() => {
-    if (!pauseState || pauseState.paused) return
-    let cancelled = false
-    fetch('/api/momo/orders')
-      .then((res) => { if (!res.ok) throw new Error('Không tải được dữ liệu'); return res.json() })
-      .then((data) => { if (!cancelled) setOrders(data.orders || []) })
-      .catch((err) => { if (!cancelled) setDashError(err.message) })
-    return () => { cancelled = true }
-  }, [pauseState])
-
   async function callSystemPause(action) {
     const res = await fetch('/api/admin/system-pause', {
       method: 'POST',
@@ -1012,8 +956,6 @@ export default function Home() {
   async function handleResume() { setResuming(true); try { await callSystemPause('off') } finally { setResuming(false) } }
   async function handlePauseConfirmed() { setPausing(true); try { await callSystemPause('on'); setShowPauseConfirm(false) } finally { setPausing(false) } }
 
-  const chartDays = useMemo(() => last7Days(orders || []), [orders])
-
   // ── Loading / Paused gates ──
   if (pauseState === null) {
     return (
@@ -1025,15 +967,6 @@ export default function Home() {
   if (pauseState.paused) {
     return <PausedScreen meta={pauseState} onResume={handleResume} busy={resuming} />
   }
-
-  // ── Dashboard stats ──
-  const today = (orders || []).filter((o) => isToday(o.createdAt))
-  const todayPaid = today.filter((o) => o.status === 'PAID')
-  const todayPending = today.filter((o) => o.status === 'PENDING')
-  const todayRevenue = todayPaid.reduce((sum, o) => sum + (parseInt(o.amount) || 0), 0)
-  const todayDecided = today.filter((o) => o.status === 'PAID' || o.status === 'FAILED')
-  const successRate = todayDecided.length ? Math.round((todayPaid.length / todayDecided.length) * 100) : null
-  const chartMax = Math.max(...chartDays.map((d) => d.revenue), 1)
 
   return (
     <>
@@ -1082,49 +1015,6 @@ export default function Home() {
               </div>
             </div>
             <SystemStatusChip busy={pausing} onPause={() => setShowPauseConfirm(true)} />
-          </div>
-
-          {/* ── Dashboard error ── */}
-          {dashError && (
-            <div className="mb-6 flex items-center gap-2.5 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              <IconAlertTriangle className="shrink-0" />
-              {dashError} — thử tải lại trang.
-            </div>
-          )}
-
-          {/* ── Stat cards ── */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-            <StatCard label="Doanh thu hôm nay" value={orders === null ? '—' : currency.format(todayRevenue)} />
-            <StatCard label="Đang chờ" value={orders === null ? '—' : todayPending.length}
-              accent={todayPending.length > 0 ? 'amber' : undefined}
-              dot={todayPending.length > 0 ? 'bg-amber-500' : undefined} />
-            <StatCard label="Tỷ lệ thành công" value={orders === null ? '—' : successRate === null ? '—' : `${successRate}%`} />
-          </div>
-
-          {/* ── Chart 7 ngày ── */}
-          <div className={`rounded-2xl bg-white px-6 py-6 mb-8 ${CARD_SHADOW}`}>
-            <p className="text-sm font-semibold text-stone-900 mb-5">Doanh thu 7 ngày qua</p>
-            {orders === null ? (
-              <div className="flex items-end gap-2 h-28">
-                {[...Array(7)].map((_, i) => (
-                  <div key={i} className="flex-1 h-full rounded-t-md bg-stone-100 animate-pulse" />
-                ))}
-              </div>
-            ) : (
-              <div className="flex items-end gap-2 h-28">
-                {chartDays.map((d, i) => (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-1.5 h-full">
-                    <div className="w-full flex-1 rounded-t-md bg-stone-100 flex flex-col-reverse overflow-hidden">
-                      <div
-                        className={`w-full rounded-t-md transition-all duration-500 ${d.isToday ? 'bg-gradient-to-t from-momo-dark to-momo' : 'bg-stone-300'}`}
-                        style={{ height: `${Math.max(4, Math.round((d.revenue / chartMax) * 100))}%` }}
-                      />
-                    </div>
-                    <span className={`text-[10px] font-medium ${d.isToday ? 'text-momo' : 'text-stone-400'}`}>{d.label}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
           {/* ── Divider + tiêu đề tạo giao dịch ── */}
