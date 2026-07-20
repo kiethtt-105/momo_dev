@@ -37,7 +37,14 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 
 const CARD_SHADOW = 'shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)]'
-const POLL_INTERVAL_MS = 30 * 1000 // tự động kiểm tra giao dịch mỗi 30s
+// Backoff tăng dần cho poll tự động: 3 lần đầu 15s, rồi giãn dần ra 30s
+// -> 45s -> tối đa 60s. IPN mới là nguồn cập nhật "thật" chính, poll ở
+// đây chỉ là lưới dự phòng phòng khi IPN tới trễ/không tới.
+const POLL_BACKOFF_STEPS_MS = [15000, 15000, 15000, 30000, 45000]
+const POLL_BACKOFF_MAX_MS = 60000
+function getPollDelay(attempt) {
+  return POLL_BACKOFF_STEPS_MS[attempt] ?? POLL_BACKOFF_MAX_MS
+}
 const ORDER_EXPIRE_MS = 10 * 60 * 1000 // 10 phút kể từ lúc tạo đơn
 const CACHE_PREFIX = 'mm_thanhtoan_'
 const CACHE_VERSION = 2 // tăng version khi đổi shape cache để tự bỏ qua cache cũ
@@ -404,6 +411,7 @@ export default function ThanhToan() {
 
   const pollTimeoutRef = useRef(null)
   const nextPollAtRef = useRef(null)
+  const pollAttemptRef = useRef(0)
   const orderAbortRef = useRef(null)
   const transferAbortRef = useRef(null)
   const qrAbortRef = useRef(null)
@@ -595,19 +603,30 @@ export default function ThanhToan() {
     return () => clearInterval(timer)
   }, [order?.status, expired])
 
-  // Tự động kiểm tra giao dịch mỗi 30s cho tới khi có kết quả cuối (PAID/FAILED)
-  // hoặc hết hạn. Dùng setTimeout tự lặp (thay vì setInterval cố định) để mỗi
-  // lần bấm "Kiểm tra kết quả" thủ công có thể dời lại mốc 30s tiếp theo,
-  // tránh kiểm tra trùng ngay sau khi khách vừa tự tra.
+  // Tự động kiểm tra giao dịch cho tới khi có kết quả cuối (PAID/FAILED)
+  // hoặc hết hạn. Dùng setTimeout tự lặp (thay vì setInterval cố định) để:
+  // (1) mỗi lần bấm "Kiểm tra kết quả" thủ công có thể dời lại mốc tiếp
+  // theo, tránh kiểm tra trùng ngay sau khi khách vừa tự tra; (2) giãn dần
+  // thời gian chờ (backoff) thay vì luôn cố định 30s; (3) tạm dừng hẳn khi
+  // tab bị ẩn — xem effect visibilitychange bên dưới.
   const scheduleNextPoll = useCallback(() => {
     if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
-    nextPollAtRef.current = Date.now() + POLL_INTERVAL_MS
-    setNextPollInMs(POLL_INTERVAL_MS)
+    // Tab đang ẩn thì không hẹn giờ nữa — đợi khách quay lại tab mới poll tiếp,
+    // đỡ tốn quota gọi MoMo lúc khách không xem trang.
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      nextPollAtRef.current = null
+      setNextPollInMs(null)
+      return
+    }
+    const delay = getPollDelay(pollAttemptRef.current)
+    pollAttemptRef.current += 1
+    nextPollAtRef.current = Date.now() + delay
+    setNextPollInMs(delay)
     pollTimeoutRef.current = setTimeout(async () => {
       await checkRealStatus()
       await loadOrder()
       scheduleNextPoll()
-    }, POLL_INTERVAL_MS)
+    }, delay)
   }, [loadOrder, checkRealStatus])
 
   useEffect(() => {
@@ -617,18 +636,41 @@ export default function ThanhToan() {
       nextPollAtRef.current = null
       return
     }
+    pollAttemptRef.current = 0
     scheduleNextPoll()
     return () => {
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
     }
   }, [orderId, order?.status, expired, scheduleNextPoll])
 
+  // Tạm dừng poll khi tab bị ẩn (xem scheduleNextPoll ở trên); khách quay
+  // lại tab thì kiểm tra ngay 1 lần rồi hẹn giờ tiếp bình thường, thay vì
+  // để trang đứng im chờ tới hết chu kỳ cũ.
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState !== 'visible') return
+      if (!orderId || !order) return
+      if (order.status !== 'PENDING' || expired) return
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
+      ;(async () => {
+        await checkRealStatus()
+        await loadOrder()
+        scheduleNextPoll()
+      })()
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [orderId, order, expired, checkRealStatus, loadOrder, scheduleNextPoll])
+
   const handleManualCheck = useCallback(async () => {
     setChecking(true)
     await checkRealStatus()
     await loadOrder({ manual: true })
     // Đơn vẫn đang chờ thì dời lại mốc tự động kiểm tra tiếp theo, tránh tra trùng
-    if (order?.status === 'PENDING' && !expired) scheduleNextPoll()
+    if (order?.status === 'PENDING' && !expired) {
+      pollAttemptRef.current = 0
+      scheduleNextPoll()
+    }
   }, [checkRealStatus, loadOrder, order?.status, expired, scheduleNextPoll])
 
   // -------------------------------------------------------------------

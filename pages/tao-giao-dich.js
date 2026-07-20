@@ -67,7 +67,14 @@ const STATUS_TEXT = {
 }
 
 const ORDER_TTL_SECONDS = 10 * 60 // khớp ORDER_EXPIRE_MS ở api/momo/create.js
-const POLL_INTERVAL_MS = 30000 // hỏi MoMo qua /api/momo/query — 30s để đỡ tốn quota
+// Backoff tăng dần cho poll trạng thái đơn: 3 lần đầu 15s, rồi giãn dần
+// ra 30s -> 45s -> tối đa 60s. IPN mới là nguồn cập nhật "thật" chính,
+// poll ở đây chỉ là lưới dự phòng phòng khi IPN tới trễ/không tới.
+const POLL_BACKOFF_STEPS_MS = [15000, 15000, 15000, 30000, 45000]
+const POLL_BACKOFF_MAX_MS = 60000
+function getPollDelay(attempt) {
+  return POLL_BACKOFF_STEPS_MS[attempt] ?? POLL_BACKOFF_MAX_MS
+}
 const POLL_GRACE_MS = 2 * 60 * 1000 // vẫn dò thêm 2 phút sau khi hết hạn, phòng IPN tới trễ
 
 const CACHE_KEY_P2P = 'momo_tao_gd_p2p_v1'
@@ -438,14 +445,49 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
   // Tự động dò trạng thái trong lúc chờ khách quét, dừng ngay khi có kết
   // quả cuối (PAID/FAILED). Hết hạn rồi vẫn dò thêm 2 phút phòng trường
   // hợp khách bấm thanh toán sát giờ / IPN tới trễ, sau đó ngưng hẳn.
+  //
+  // Dùng setTimeout tự lặp (không phải setInterval cố định) để: (1) mỗi
+  // vòng có thể giãn thời gian dần (backoff) thay vì luôn 30s, (2) tạm
+  // dừng hẳn khi tab bị ẩn (đỡ tốn quota gọi MoMo lúc admin không xem
+  // trang) và tự kiểm tra ngay 1 lần khi quay lại tab thay vì chờ hết
+  // chu kỳ mới poll tiếp.
   useEffect(() => {
     if (status !== 'PENDING') return
     if (isExpired) {
       if (!expiredAtRef.current) expiredAtRef.current = Date.now()
       if (Date.now() - expiredAtRef.current > POLL_GRACE_MS) return
     }
-    const id = setInterval(handleCheck, POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+
+    let cancelled = false
+    let attempt = 0
+    let timeoutId = null
+
+    function schedule() {
+      if (cancelled || document.visibilityState === 'hidden') return
+      const delay = getPollDelay(attempt)
+      attempt += 1
+      timeoutId = setTimeout(async () => {
+        await handleCheck()
+        schedule()
+      }, delay)
+    }
+
+    function handleVisibility() {
+      if (cancelled) return
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+      if (document.visibilityState === 'visible') {
+        handleCheck().then(schedule)
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    schedule()
+
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, isExpired])
 
