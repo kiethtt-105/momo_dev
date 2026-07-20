@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
+import { Analytics } from '@vercel/analytics/next'
 import '../styles/globals.css'
 
 // Các route KHÔNG cần đăng nhập admin — link gửi trực tiếp cho khách
@@ -130,8 +131,11 @@ function LoginGate({ children }) {
 
 export default function App({ Component, pageProps }) {
   return (
-    <LoginGate>
-      <Component {...pageProps} />
-    </LoginGate>
+    <>
+      <LoginGate>
+        <Component {...pageProps} />
+      </LoginGate>
+      <Analytics />
+    </>
   )
 }
