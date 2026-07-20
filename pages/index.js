@@ -33,17 +33,15 @@ const STATUS_TEXT = {
 }
 
 const ORDER_TTL_SECONDS = 10 * 60
+// Dashboard admin CHỈ cho phép kiểm tra trạng thái THỦ CÔNG (nút "Kiểm
+// tra ngay") — đã bỏ hẳn auto-check lúc mount và poll backoff tự động.
+// Lý do: đây là trang admin, người dùng đang nhìn màn hình chủ động, mỗi
+// lần kiểm tra là 1 lượt gọi thật tới MoMo (queryMoMoTransaction) — để
+// tự động lặp lại liên tục (kiểu backoff cũ) rất tốn tài nguyên/quota MoMo
+// khi dashboard mở nhiều tab/nhiều đơn PENDING cùng lúc. IPN (ipn.js) vẫn
+// là nguồn cập nhật "thật" chính khi khách thanh toán xong; nút thủ công
+// ở đây chỉ để dùng khi nghi ngờ IPN chưa tới.
 const POLL_GRACE_MS = 2 * 60 * 1000
-
-// Backoff tăng dần cho poll trạng thái đơn: 3 lần đầu 15s (mới tạo đơn,
-// khách đang thao tác nên khả năng có kết quả mới cao), rồi giãn dần ra
-// 30s -> 45s -> tối đa 60s. IPN mới là nguồn cập nhật "thật" chính, poll
-// ở đây chỉ là lưới dự phòng phòng khi IPN tới trễ/không tới.
-const POLL_BACKOFF_STEPS_MS = [15000, 15000, 15000, 30000, 45000]
-const POLL_BACKOFF_MAX_MS = 60000
-function getPollDelay(attempt) {
-  return POLL_BACKOFF_STEPS_MS[attempt] ?? POLL_BACKOFF_MAX_MS
-}
 
 const CACHE_KEY_P2P = 'momo_tao_gd_p2p_v1'
 const CACHE_KEY_SCAN = 'momo_tao_gd_scan_v1'
@@ -379,7 +377,6 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const { secondsLeft, isExpired } = useCountdown(tx.expiresAt)
-  const expiredAtRef = useRef(null)
 
   const thanhToanUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/thanh-toan?orderId=${encodeURIComponent(tx.orderId)}`
@@ -405,60 +402,15 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
     } catch { /* giữ nguyên */ } finally { setChecking(false) }
   }
 
-  useEffect(() => {
-    if (status === 'PAID' || status === 'FAILED') return
-    handleCheck()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Tự động dò trạng thái trong lúc chờ khách quét, dừng ngay khi có kết
-  // quả cuối (PAID/FAILED). Hết hạn rồi vẫn dò thêm 2 phút phòng trường
-  // hợp khách bấm thanh toán sát giờ / IPN tới trễ, sau đó ngưng hẳn.
-  //
-  // Dùng setTimeout tự lặp (không phải setInterval cố định) để: (1) mỗi
-  // vòng có thể giãn thời gian dần (backoff) thay vì luôn 30s, (2) tạm
-  // dừng hẳn khi tab bị ẩn (đỡ tốn quota gọi MoMo lúc khách không xem
-  // trang) và tự kiểm tra ngay 1 lần khi quay lại tab thay vì chờ hết
-  // chu kỳ mới poll tiếp.
-  useEffect(() => {
-    if (status !== 'PENDING') return
-    if (isExpired) {
-      if (!expiredAtRef.current) expiredAtRef.current = Date.now()
-      if (Date.now() - expiredAtRef.current > POLL_GRACE_MS) return
-    }
-
-    let cancelled = false
-    let attempt = 0
-    let timeoutId = null
-
-    function schedule() {
-      if (cancelled || document.visibilityState === 'hidden') return
-      const delay = getPollDelay(attempt)
-      attempt += 1
-      timeoutId = setTimeout(async () => {
-        await handleCheck()
-        schedule()
-      }, delay)
-    }
-
-    function handleVisibility() {
-      if (cancelled) return
-      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
-      if (document.visibilityState === 'visible') {
-        handleCheck().then(schedule)
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibility)
-    schedule()
-
-    return () => {
-      cancelled = true
-      if (timeoutId) clearTimeout(timeoutId)
-      document.removeEventListener('visibilitychange', handleVisibility)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, isExpired])
+  // ĐÃ BỎ auto-check lúc mount và poll backoff tự động theo dõi trạng
+  // thái (trước đây tự gọi MoMo ngay khi vào trang, rồi lặp lại mỗi
+  // 15–60s cho tới khi có kết quả cuối). Giờ CHỈ kiểm tra khi admin chủ
+  // động bấm nút "Kiểm tra ngay" bên dưới — mỗi lần kiểm tra là 1 lượt
+  // gọi thật tới MoMo (queryMoMoTransaction), không nên tự động lặp lại
+  // liên tục khi dashboard mở nhiều đơn PENDING cùng lúc. IPN (ipn.js)
+  // vẫn là nguồn cập nhật trạng thái "thật" chính khi khách thanh toán —
+  // trạng thái đơn trong danh sách sẽ tự đúng khi admin bấm kiểm tra lại
+  // hoặc tải lại trang, không cần polling nền tốn tài nguyên.
 
   useEffect(() => {
     if (status !== 'PENDING' || !isExpired) return
