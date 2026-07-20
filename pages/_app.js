@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import '../styles/globals.css'
+import { Analytics } from '@vercel/analytics/react'
 
 // Các route KHÔNG cần đăng nhập admin — link gửi trực tiếp cho khách
 // (vd: /thanh-toan?orderId=xxx qua Zalo, tin nhắn...).
@@ -132,6 +133,7 @@ export default function App({ Component, pageProps }) {
   return (
     <LoginGate>
       <Component {...pageProps} />
+      <Analytics />
     </LoginGate>
   )
 }
