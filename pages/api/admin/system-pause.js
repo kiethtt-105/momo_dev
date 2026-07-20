@@ -1,23 +1,30 @@
 // pages/api/admin/system-pause.js
 //
-// Công tắc BẬT/TẮT toàn hệ thống (kill switch). CỐ Ý KHÔNG check session
-// admin — chỉ check API key — vì đây chính là "cửa thoát hiểm": phải bật
-// hoặc tắt được ngay cả khi phần đăng nhập admin đang gặp sự cố, và dùng
-// nhanh được qua 1 đường link tắt (bookmark trên trình duyệt/điện thoại)
-// mà không cần mở trang quản trị lên trước.
+// Công tắc BẬT/TẮT toàn hệ thống (kill switch).
+//
+// XÁC THỰC — 2 cách, ƯU TIÊN key trước, sai/thiếu key mới rơi xuống session:
+//   1. API key (header x-api-key hoặc ?key=) — đây là "cửa thoát hiểm":
+//      PHẢI hoạt động được ngay cả khi phần đăng nhập admin đang gặp sự
+//      cố (session hỏng, cookie mất, verifySession lỗi...), và dùng nhanh
+//      được qua 1 đường link tắt (bookmark trên trình duyệt/điện thoại)
+//      mà không cần mở trang quản trị lên trước. Vì vậy KHÔNG được thay
+//      hẳn bằng session — chỉ bổ sung thêm lựa chọn thứ 2 bên dưới.
+//   2. Session admin đã đăng nhập (cookie) — bổ sung MỚI: chỉ được kiểm
+//      tra khi key thiếu hoặc sai, để admin đang ở trang quản trị (đã
+//      đăng nhập sẵn) bấm nút Tạm dừng/Bật lại KHÔNG cần biết hay gõ
+//      NEXT_PUBLIC_SYSTEM_PAUSE_KEY thủ công. Key vẫn là con đường CHÍNH
+//      dùng cho link tắt/gọi từ ngoài; session chỉ là lối tắt tiện lợi
+//      thêm cho giao diện nội bộ.
 //
 // route này LUÔN được middleware.js cho qua (không bao giờ bị 503 dù đang
 // paused) — xem ALWAYS_ALLOWED trong middleware.js.
-//
-// Xác thực bằng key, chấp nhận 1 trong 2 cách:
-//   - Header:       x-api-key: <key>       (gọi bằng fetch, vd nút trên trang admin)
-//   - Query string: ?key=<key>             (để bấm được từ 1 LINK TẮT dán thẳng trên trình duyệt)
 //
 // Cách dùng:
 //   GET  /api/admin/system-pause?key=XXX                  -> chỉ đọc trạng thái, không đổi gì
 //   GET  /api/admin/system-pause?key=XXX&action=on         -> BẬT tạm dừng (dùng được cho link tắt, chỉ cần bấm)
 //   GET  /api/admin/system-pause?key=XXX&action=off        -> TẮT tạm dừng, chạy lại bình thường
 //   POST /api/admin/system-pause  body:{action,reason}     -> giống trên, dùng từ code (fetch)
+//   (mọi cách gọi trên đều dùng được session admin THAY key nếu đang đăng nhập sẵn — xem authorize() bên dưới)
 //
 // Đặt biến môi trường NEXT_PUBLIC_SYSTEM_PAUSE_KEY trên Vercel (Settings →
 // Environment Variables, áp dụng cho cả Production). Dùng tiền tố
@@ -31,16 +38,22 @@
 //   2. Gộp việc set 2 key Redis (paused + meta) bằng Promise.all thay vì
 //      await tuần tự -> giảm độ trễ round-trip khi bật pause.
 //   3. Trả lỗi 400 sớm hơn cho action không hợp lệ, tránh gọi Redis thừa.
+//   4. [MỚI] Xác thực chấp nhận thêm session admin (chỉ khi key thiếu/sai) —
+//      đỡ phải gõ/lộ key trong trình duyệt khi thao tác từ trang quản trị.
+//   5. [MỚI] Dữ liệu trả về có thêm `_authVia` ("key" | "session") để biết
+//      request vừa rồi được cho qua nhờ cách nào — hữu ích khi debug
+//      "tại sao request không có key mà vẫn được chấp nhận".
 
 import { Redis } from '@upstash/redis'
 import crypto from 'crypto'
+import { verifySession, refreshSession } from './login'
 
 const redis = Redis.fromEnv()
 
 // Đánh dấu phiên bản code — đổi mỗi lần sửa file này. Dùng để XÁC NHẬN
 // chắc chắn qua response xem Vercel đang chạy đúng bản mới nhất hay vẫn
 // còn bản cũ (tránh nghi ngờ mơ hồ "không biết đã deploy chưa").
-const CODE_VERSION = 'v3-direct-return-2026-07-20'
+const CODE_VERSION = 'v4-key-or-session-2026-07-20'
 
 const REDIS_KEY = 'system:paused'
 const REDIS_META_KEY = 'system:paused:meta'
@@ -57,13 +70,40 @@ function safeCompare(a, b) {
   return crypto.timingSafeEqual(bufA, bufB)
 }
 
-function isAuthorized(req) {
+// Chỉ xác thực bằng key — KHÔNG đụng gì tới session. Tách riêng thành 1
+// hàm để giữ đúng vai trò "cửa thoát hiểm" độc lập: hoạt động được ngay
+// cả khi toàn bộ hệ thống session/login đang hỏng, vì nó không phụ thuộc
+// verifySession() chút nào.
+function isKeyValid(req) {
   // Chưa cấu hình biến môi trường -> khoá cứng luôn, không cho ai bật/tắt
-  // (an toàn hơn là để trống = ai gọi cũng được).
+  // qua key (an toàn hơn là để trống = ai gọi cũng được). Session ở dưới
+  // vẫn có thể cho qua bình thường nếu admin đã đăng nhập.
   if (!VALID_KEY) return false
   const headerKey = req.headers['x-api-key']
   const queryKey = req.query.key
   return safeCompare(headerKey, VALID_KEY) || safeCompare(queryKey, VALID_KEY)
+}
+
+// Xác thực tổng: ƯU TIÊN key trước (đúng tinh thần "cửa thoát hiểm", luôn
+// hoạt động bất kể session ra sao) — CHỈ khi key thiếu hoặc sai mới rơi
+// xuống kiểm tra session admin. Nhờ vậy:
+//   - Link tắt dán key trên trình duyệt/điện thoại vẫn chạy y như cũ,
+//     không phụ thuộc có đăng nhập admin hay không.
+//   - Nút bấm trong trang quản trị (đã có session) không cần đính kèm key
+//     nữa vẫn hoạt động được, không cần lộ NEXT_PUBLIC_SYSTEM_PAUSE_KEY
+//     thêm 1 lần nữa qua request này.
+// Trả về { ok, via } — via cho biết request được cho qua nhờ "key" hay
+// "session", dùng để log và trả kèm trong response.
+function authorize(req, res) {
+  if (isKeyValid(req)) return { ok: true, via: 'key' }
+
+  const isAdmin = verifySession(req)
+  if (isAdmin) {
+    refreshSession(req, res) // gia hạn session, giống các route admin khác
+    return { ok: true, via: 'session' }
+  }
+
+  return { ok: false, via: null }
 }
 
 export default async function handler(req, res) {
@@ -78,10 +118,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  if (!isAuthorized(req)) {
-    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
+  const { ok: authorized, via } = authorize(req, res)
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
+
+  if (!authorized) {
     console.log(`[system-pause] UNAUTHORIZED attempt from ${ip} @ ${new Date().toISOString()}`)
-    return res.status(401).json({ error: 'Sai hoặc thiếu api-key.' })
+    return res.status(401).json({ error: 'Sai hoặc thiếu api-key, và cũng chưa đăng nhập admin.' })
   }
 
   const action = req.body?.action || req.query.action
@@ -89,22 +131,19 @@ export default async function handler(req, res) {
   // Log NGAY giá trị action nhận được (kể cả undefined) — nếu 1 request
   // action=on mà không thấy dòng log này với action="on", nghĩa là request
   // đó không tới được đây với query đúng như kỳ vọng (deploy sai bản, path
-  // sai, hoặc bị proxy/cache chặn trước khi tới function).
-  console.log(`[system-pause] REQUEST method=${req.method} action=${JSON.stringify(action)} query=${JSON.stringify(req.query)}`)
+  // sai, hoặc bị proxy/cache chặn trước khi tới function). Log kèm `via`
+  // để biết request này qua được nhờ key hay session.
+  console.log(`[system-pause] REQUEST method=${req.method} via=${via} action=${JSON.stringify(action)} query=${JSON.stringify(req.query)}`)
 
   if (action && action !== 'on' && action !== 'off') {
     return res.status(400).json({ error: 'action phải là "on" hoặc "off".' })
   }
 
-  // IP để log — hữu ích khi cần biết ai/từ đâu bấm bật-tắt. Không dùng để
-  // xác thực, chỉ để theo dõi.
-  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
-
   if (action === 'on') {
     const reason = req.body?.reason || req.query.reason || null
     const meta = { pausedAt: new Date().toISOString(), reason }
     await Promise.all([redis.set(REDIS_KEY, '1'), redis.set(REDIS_META_KEY, JSON.stringify(meta))])
-    console.log(`[system-pause] TURNED ON by ${ip} @ ${new Date().toISOString()}${reason ? ` — lý do: ${reason}` : ''}`)
+    console.log(`[system-pause] TURNED ON by ${ip} (via=${via}) @ ${new Date().toISOString()}${reason ? ` — lý do: ${reason}` : ''}`)
     // Trả thẳng giá trị VỪA GHI, không đọc lại Redis ngay sau khi ghi.
     // Lý do: nếu Redis là Upstash "Global" (multi-region), đọc lại ngay
     // sau khi ghi có thể rơi vào 1 replica chưa kịp đồng bộ và trả về giá
@@ -115,13 +154,13 @@ export default async function handler(req, res) {
     // (middleware đọc Redis độc lập, không đi qua đường này) — nếu domain
     // đang dùng Redis Global, vẫn nên đổi sang Regional để đảm bảo
     // middleware chặn request ngay lập tức, không trễ vài trăm ms~vài giây.
-    return res.status(200).json({ paused: true, ...meta, _version: CODE_VERSION })
+    return res.status(200).json({ paused: true, ...meta, _version: CODE_VERSION, _authVia: via })
   }
 
   if (action === 'off') {
     await Promise.all([redis.set(REDIS_KEY, '0'), redis.del(REDIS_META_KEY)])
-    console.log(`[system-pause] TURNED OFF by ${ip} @ ${new Date().toISOString()}`)
-    return res.status(200).json({ paused: false, _version: CODE_VERSION })
+    console.log(`[system-pause] TURNED OFF by ${ip} (via=${via}) @ ${new Date().toISOString()}`)
+    return res.status(200).json({ paused: false, _version: CODE_VERSION, _authVia: via })
   }
 
   // Không có action -> chỉ đọc trạng thái hiện tại, không đổi gì.
@@ -144,5 +183,5 @@ export default async function handler(req, res) {
     }
   }
 
-  return res.status(200).json({ paused, ...meta, _version: CODE_VERSION })
+  return res.status(200).json({ paused, ...meta, _version: CODE_VERSION, _authVia: via })
 }
