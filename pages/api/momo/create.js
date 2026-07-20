@@ -145,7 +145,13 @@ async function handleP2P(params, res) {
     const qrSource = result.qrCodeUrl || result.payUrl
     if (qrSource) {
       try {
-        qrCodeImage = await QRCode.toDataURL(qrSource, { errorCorrectionLevel: 'H', margin: 1, width: 400 })
+        // errorCorrectionLevel 'H' (30% phục hồi) + width 400 tạo file base64
+        // lớn hơn nhiều so với mức cần thiết cho 1 QR link đơn giản (payUrl
+        // ngắn, không phải QR ngân hàng chứa nhiều dữ liệu). 'M' (~15%) vẫn
+        // thừa dư địa quét trong điều kiện bình thường, width 260 vẫn đủ nét
+        // trên màn hình di động — giảm đáng kể dung lượng lưu trong Redis vì
+        // field này được lưu lại nguyên văn cho MỌI đơn p2p.
+        qrCodeImage = await QRCode.toDataURL(qrSource, { errorCorrectionLevel: 'M', margin: 1, width: 260 })
       } catch (qrErr) {
         console.error('[create][p2p] QR Generate Error:', qrErr.message)
       }

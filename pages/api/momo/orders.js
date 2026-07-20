@@ -10,7 +10,7 @@
 //                             danh sách người khác)
 // GET  (không có orderId)  → CHỈ admin mới xem được toàn bộ danh sách
 
-import { listOrders } from '../../../lib/orders'
+import { listOrders, getOrder } from '../../../lib/orders'
 import { verifySession, refreshSession } from '../admin/login'
 
 // Field khách (không session admin) được xem — mở rộng thêm so với trước
@@ -59,15 +59,23 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Chưa đăng nhập hoặc session hết hạn' })
     }
 
-    let orders = await listOrders()
-
-    if (orderId) {
-      const needle = String(orderId).trim().toLowerCase()
-      orders = orders.filter(o => (o.orderId || '').toLowerCase().includes(needle))
-    }
+    // Khách luôn truyền orderId CHÍNH XÁC (từ URL trang /thanh-toan) và
+    // route này bị FE poll liên tục — trước đây mọi lượt poll đều load
+    // TOÀN BỘ danh sách đơn (listOrders) rồi mới filter substring trong
+    // JS, dù chỉ cần đúng 1 đơn. Giờ tách riêng: khách dùng getOrder(id)
+    // (1 key Redis, không kéo cả danh sách). Admin vẫn giữ listOrders +
+    // filter substring như cũ để phục vụ tìm kiếm gần đúng trên dashboard.
+    let orders
 
     if (!isAdmin) {
-      orders = orders.map(toGuestOrder)
+      const order = await getOrder(String(orderId).trim())
+      orders = order ? [toGuestOrder(order)] : []
+    } else if (orderId) {
+      const needle = String(orderId).trim().toLowerCase()
+      const all = await listOrders()
+      orders = all.filter(o => (o.orderId || '').toLowerCase().includes(needle))
+    } else {
+      orders = await listOrders()
     }
 
     console.log(`[orders] → trả ${orders.length} đơn (isAdmin=${isAdmin})`)
