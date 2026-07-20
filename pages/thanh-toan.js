@@ -5,7 +5,12 @@
 // Truy cập: /thanh-toan?orderId=iPOSxxxxx
 //
 // Luồng dữ liệu:
-//   1. GET /api/momo/orders?orderId=xxx        → trạng thái đơn (public, đã lược field nhạy cảm)
+//   1. GET /api/momo/guest-check-token?orderId=xxx  → xin token dùng-1-lần
+//      GET /api/momo/query?orderId=xxx&token=yyy    → NGUỒN DỮ LIỆU DUY NHẤT
+//      cho trạng thái + thông tin đơn (amount, orderInfo, status, paidAt,
+//      transId, storeName, aio_qr, createdAt...). Hỏi thẳng MoMo real-time
+//      nên luôn có kết quả thật, không phụ thuộc IPN đã chạy hay chưa —
+//      KHÔNG còn gọi /api/momo/orders nữa (route đó giờ chỉ phục vụ admin).
 //   2. GET /api/momo/qr-extract?orderId=xxx     → ảnh QR thật do MoMo render sẵn (350x350, quét được
 //      bằng app ngân hàng bất kỳ hỗ trợ VietQR, không riêng app MoMo)
 //   3. GET /api/momo/transfer-info?orderId=xxx  → số tài khoản/ngân hàng/nội dung để khách
@@ -14,11 +19,17 @@
 // Hành vi:
 //   - Mọi dữ liệu (đơn hàng, QR, thông tin chuyển khoản) được lưu vào sessionStorage
 //     theo orderId. Khi khách F5, dữ liệu cache hiện ra NGAY LẬP TỨC, không phải chờ
-//     tải lại từ đầu — rồi trang mới âm thầm gọi API phía sau để cập nhật nếu có gì đổi.
-//   - Tự động kiểm tra trạng thái giao dịch mỗi 30s, dừng ngay khi có kết quả cuối
-//     (PAID/FAILED) hoặc khi hết hạn 10 phút. Bấm "Kiểm tra kết quả" thủ công sẽ
-//     tự dời lại mốc 30s tiếp theo, tránh kiểm tra trùng ngay sau đó.
-//   - Có nút "Kiểm tra kết quả" để khách chủ động tra ngay, không cần chờ vòng poll.
+//     tải lại từ đầu. Nếu đơn đã ở trạng thái cuối (PAID/FAILED/EXPIRED) và đã có
+//     trong cache, trang dùng thẳng cache, KHÔNG gọi lại API — trạng thái cuối không
+//     thể đổi nữa nên gọi lại chỉ tốn tài nguyên. Chỉ đơn PENDING mới gọi ngầm 1 lần
+//     lúc vào trang để lấy trạng thái mới nhất (đây cũng là lần kiểm tra thật với
+//     MoMo duy nhất KHÔNG do khách chủ động bấm, vì trang cần dữ liệu để hiển thị).
+//   - CHỈ CHẤP NHẬN KIỂM TRA THỦ CÔNG — không còn bất kỳ cơ chế tự động kiểm tra
+//     lại nào khác (không polling nền, không tự động kiểm tra khi MoMo redirect
+//     về qua ?autoCheck=1 như trước). Mỗi lượt kiểm tra là 1 lượt gọi thật tới
+//     MoMo nên chỉ chạy khi khách chủ động bấm nút "Kiểm tra kết quả", để tiết
+//     kiệm tài nguyên server nhất có thể.
+//   - Có nút "Kiểm tra kết quả" để khách chủ động tra ngay khi cần.
 //   - QR và thông tin chuyển khoản tải ĐỘC LẬP với nhau và với trạng thái đơn — cái nào
 //     xong trước hiện trước. Mỗi khối đều có nút "Tải lại" hiển thị thường trực (không
 //     chỉ khi lỗi), để khách chủ động làm mới QR / thông tin bất cứ lúc nào.
@@ -37,14 +48,6 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 
 const CARD_SHADOW = 'shadow-[0_1px_2px_rgba(33,26,29,0.04),0_6px_16px_-10px_rgba(33,26,29,0.15)]'
-// Backoff tăng dần cho poll tự động: 3 lần đầu 15s, rồi giãn dần ra 30s
-// -> 45s -> tối đa 60s. IPN mới là nguồn cập nhật "thật" chính, poll ở
-// đây chỉ là lưới dự phòng phòng khi IPN tới trễ/không tới.
-const POLL_BACKOFF_STEPS_MS = [15000, 15000, 15000, 30000, 45000]
-const POLL_BACKOFF_MAX_MS = 60000
-function getPollDelay(attempt) {
-  return POLL_BACKOFF_STEPS_MS[attempt] ?? POLL_BACKOFF_MAX_MS
-}
 const ORDER_EXPIRE_MS = 10 * 60 * 1000 // 10 phút kể từ lúc tạo đơn
 const CACHE_PREFIX = 'mm_thanhtoan_'
 const CACHE_VERSION = 2 // tăng version khi đổi shape cache để tự bỏ qua cache cũ
@@ -404,29 +407,41 @@ export default function ThanhToan() {
 
   const [remainingMs, setRemainingMs] = useState(null)
   const [expired, setExpired] = useState(false)
-  const [nextPollInMs, setNextPollInMs] = useState(null)
 
   // Tab đang xem — mặc định mở khung QR trước vì đa số khách quét QR
   const [activeTab, setActiveTab] = useState('qr')
 
-  const pollTimeoutRef = useRef(null)
-  const nextPollAtRef = useRef(null)
-  const pollAttemptRef = useRef(0)
   const orderAbortRef = useRef(null)
   const transferAbortRef = useRef(null)
   const qrAbortRef = useRef(null)
-  const autoCheckDoneRef = useRef(false)
 
   // -------------------------------------------------------------------
-  // Tải đơn hàng — silent = true khi chạy nền (poll/hydrate), không bật
-  // các cờ loading để tránh làm giao diện "giật" khi đã có dữ liệu cache.
+  // NGUỒN DỮ LIỆU DUY NHẤT cho trang này: /api/momo/query (kèm token
+  // dùng-1-lần từ /api/momo/guest-check-token). KHÔNG còn gọi
+  // /api/momo/orders nữa, vì 2 lý do:
+  //   1. orders.js chỉ đọc Redis — đơn nào IPN chưa kịp xử lý (hoặc chưa
+  //      từng được đồng bộ) sẽ không có trạng thái mới nhất, thậm chí
+  //      không có dữ liệu. query.js hỏi thẳng MoMo nên luôn ra kết quả
+  //      thật, không phụ thuộc IPN đã chạy hay chưa.
+  //   2. Gộp "đọc dữ liệu hiển thị" và "kiểm tra thật với MoMo" thành 1
+  //      request duy nhất thay vì 2 request nối tiếp (check rồi load lại)
+  //      như trước — đỡ tốn 1 lượt gọi mỗi lần kiểm tra.
   //
-  // Quan trọng: nếu lần đồng bộ này thất bại (mất mạng, hoặc API tạm thời
-  // trả rỗng) NHƯNG trang đã có đơn hàng đang hiển thị, KHÔNG được xóa giao
-  // diện để báo "không tìm thấy" — chỉ hiện banner nhỏ và giữ nguyên dữ liệu
-  // cũ. Màn "không tìm thấy đơn" chỉ dành cho lần tải đầu tiên chưa có gì.
+  // silent = true khi chạy nền (hydrate lúc vào trang lần đầu), không bật
+  // cờ loading để tránh giật giao diện khi đã có dữ liệu cache. Đây là lần
+  // gọi BẮT BUỘC duy nhất không do khách chủ động bấm — vì trang cần dữ
+  // liệu (số tiền, trạng thái...) để hiển thị. Ngoài lần này, KHÔNG còn
+  // bất kỳ cơ chế tự động kiểm tra lại nào khác (không polling, không
+  // auto-check sau khi MoMo redirect về) — mọi lần kiểm tra lại sau đó đều
+  // phải do khách chủ động bấm nút "Kiểm tra kết quả", để tiết kiệm tài
+  // nguyên (mỗi lần kiểm tra là 1 lượt gọi thật tới MoMo).
+  //
+  // Nếu lần gọi này thất bại (mất mạng, token lỗi, MoMo lỗi tạm thời...)
+  // NHƯNG trang đã có đơn hàng đang hiển thị, KHÔNG xóa giao diện để báo
+  // "không tìm thấy" — chỉ hiện banner nhỏ và giữ nguyên dữ liệu cũ. Màn
+  // "không tìm thấy đơn" chỉ dành cho lần tải đầu tiên chưa có gì.
   // -------------------------------------------------------------------
-  const loadOrder = useCallback(async ({ manual = false } = {}) => {
+  const fetchOrderViaQuery = useCallback(async ({ manual = false } = {}) => {
     if (!orderId) return
     if (orderAbortRef.current) orderAbortRef.current.abort()
     const controller = new AbortController()
@@ -434,27 +449,52 @@ export default function ThanhToan() {
 
     if (manual) setChecking(true)
     try {
-      const res = await fetch(`/api/momo/orders?orderId=${encodeURIComponent(orderId)}`, { signal: controller.signal })
+      const tokenRes = await fetch(`/api/momo/guest-check-token?orderId=${encodeURIComponent(orderId)}`, { signal: controller.signal })
+      const tokenData = await tokenRes.json().catch(() => ({}))
+      if (!tokenRes.ok || !tokenData.token) {
+        setLastCheckedAt(Date.now())
+        setOrder((cur) => {
+          if (!cur) setNotFound(true)
+          else setSyncMessage(tokenData.error || 'Không kiểm tra được lúc này, vui lòng thử lại')
+          return cur
+        })
+        return
+      }
+
+      const res = await fetch(`/api/momo/query?orderId=${encodeURIComponent(orderId)}&token=${encodeURIComponent(tokenData.token)}`, { signal: controller.signal })
       const data = await res.json()
-      const found = (data.orders || []).find((o) => o.orderId === orderId)
       setLastCheckedAt(Date.now())
 
-      if (!found) {
+      if (!res.ok) {
         setOrder((cur) => {
           if (!cur) {
             setNotFound(true)
           } else {
-            setSyncMessage('Không đồng bộ được trạng thái mới nhất, đang thử lại...')
+            setSyncMessage(data.error || 'Không đồng bộ được trạng thái mới nhất, đang thử lại...')
           }
           return cur
         })
         return
       }
 
-      setOrder(found)
+      // Map field của query.js (orderStatus) về shape state `order` (status)
+      // dùng chung cho toàn bộ UI phía dưới.
+      const mapped = {
+        orderId: data.orderId,
+        orderInfo: data.orderInfo,
+        amount: data.amount,
+        status: data.orderStatus || 'PENDING',
+        createdAt: data.createdAt,
+        paidAt: data.paidAt,
+        transId: data.transId,
+        storeName: data.storeName,
+        aio_qr: data.aio_qr,
+        payUrl: data.payUrl,
+      }
+      setOrder(mapped)
       setNotFound(false)
       setSyncMessage('')
-      writeCache(orderId, { order: found })
+      writeCache(orderId, { order: mapped })
     } catch (err) {
       if (err?.name === 'AbortError') return
       setLastCheckedAt(Date.now())
@@ -468,28 +508,6 @@ export default function ThanhToan() {
       })
     } finally {
       if (manual) setChecking(false)
-    }
-  }, [orderId])
-
-  // -------------------------------------------------------------------
-  // Kiểm tra THẬT với MoMo (server-to-server qua /api/momo/query) — trước
-  // đây route này chỉ admin gọi được. Trang khách xin 1 token dùng-1-lần
-  // riêng cho orderId này (/api/momo/guest-check-token) rồi mới gọi query
-  // kèm token đó. Không đọc/parse response ở đây vì query.js đã tự đồng
-  // bộ Redis — loadOrder() gọi ngay sau sẽ thấy trạng thái mới nhất.
-  // Lỗi ở bước này (đơn không PENDING, mất mạng, token vừa hết hạn...) chỉ
-  // bỏ qua im lặng: loadOrder() vẫn chạy bình thường như trước giờ.
-  // -------------------------------------------------------------------
-  const checkRealStatus = useCallback(async () => {
-    if (!orderId) return
-    try {
-      const tokenRes = await fetch(`/api/momo/guest-check-token?orderId=${encodeURIComponent(orderId)}`)
-      if (!tokenRes.ok) return
-      const { token } = await tokenRes.json()
-      if (!token) return
-      await fetch(`/api/momo/query?orderId=${encodeURIComponent(orderId)}&token=${encodeURIComponent(token)}`)
-    } catch {
-      /* bỏ qua im lặng — loadOrder() phía sau vẫn chạy để đọc trạng thái hiện có */
     }
   }, [orderId])
 
@@ -555,7 +573,10 @@ export default function ThanhToan() {
     clearCacheField(orderId, 'qrSrc')
   }, [orderId])
 
-  // Hydrate từ cache ngay khi có orderId, rồi mới âm thầm gọi API để làm mới dữ liệu.
+  // Hydrate từ cache ngay khi có orderId. Nếu đơn đã ở trạng thái cuối
+  // (PAID/FAILED/EXPIRED) và cache đã có sẵn dữ liệu, dùng thẳng cache — trạng
+  // thái cuối không đổi được nữa nên gọi lại API chỉ tốn tài nguyên vô ích.
+  // Chỉ đơn PENDING (hoặc chưa có cache) mới âm thầm gọi API 1 lần lúc vào trang.
   useEffect(() => {
     if (!orderId) return
     const cached = readCache(orderId)
@@ -563,7 +584,10 @@ export default function ThanhToan() {
     if (cached?.transferInfo) setTransferInfo(cached.transferInfo)
     if (cached?.qrSrc) setQrSrc(cached.qrSrc)
 
-    loadOrder()
+    const isFinalCached = cached?.order && cached.order.status !== 'PENDING'
+    if (isFinalCached) return
+
+    fetchOrderViaQuery()
     loadTransferInfo({ silent: !!cached?.transferInfo })
     loadQr({ silent: !!cached?.qrSrc })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -588,110 +612,15 @@ export default function ThanhToan() {
     return () => clearInterval(timer)
   }, [order?.createdAt, order?.status])
 
-  // Đếm ngược tới lần tự động kiểm tra tiếp theo — chỉ để khách yên tâm trang
-  // vẫn đang "sống", không phải logic nghiệp vụ.
-  useEffect(() => {
-    if (!nextPollAtRef.current) {
-      setNextPollInMs(null)
-      return
-    }
-    function tick() {
-      setNextPollInMs(Math.max(0, nextPollAtRef.current - Date.now()))
-    }
-    tick()
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
-  }, [order?.status, expired])
-
-  // Tự động kiểm tra giao dịch cho tới khi có kết quả cuối (PAID/FAILED)
-  // hoặc hết hạn. Dùng setTimeout tự lặp (thay vì setInterval cố định) để:
-  // (1) mỗi lần bấm "Kiểm tra kết quả" thủ công có thể dời lại mốc tiếp
-  // theo, tránh kiểm tra trùng ngay sau khi khách vừa tự tra; (2) giãn dần
-  // thời gian chờ (backoff) thay vì luôn cố định 30s; (3) tạm dừng hẳn khi
-  // tab bị ẩn — xem effect visibilitychange bên dưới.
-  const scheduleNextPoll = useCallback(() => {
-    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
-    // Tab đang ẩn thì không hẹn giờ nữa — đợi khách quay lại tab mới poll tiếp,
-    // đỡ tốn quota gọi MoMo lúc khách không xem trang.
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-      nextPollAtRef.current = null
-      setNextPollInMs(null)
-      return
-    }
-    const delay = getPollDelay(pollAttemptRef.current)
-    pollAttemptRef.current += 1
-    nextPollAtRef.current = Date.now() + delay
-    setNextPollInMs(delay)
-    pollTimeoutRef.current = setTimeout(async () => {
-      await checkRealStatus()
-      await loadOrder()
-      scheduleNextPoll()
-    }, delay)
-  }, [loadOrder, checkRealStatus])
-
-  useEffect(() => {
-    if (!orderId || !order) return
-    if (order.status !== 'PENDING' || expired) {
-      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
-      nextPollAtRef.current = null
-      return
-    }
-    pollAttemptRef.current = 0
-    scheduleNextPoll()
-    return () => {
-      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
-    }
-  }, [orderId, order?.status, expired, scheduleNextPoll])
-
-  // Tạm dừng poll khi tab bị ẩn (xem scheduleNextPoll ở trên); khách quay
-  // lại tab thì kiểm tra ngay 1 lần rồi hẹn giờ tiếp bình thường, thay vì
-  // để trang đứng im chờ tới hết chu kỳ cũ.
-  useEffect(() => {
-    function handleVisibility() {
-      if (document.visibilityState !== 'visible') return
-      if (!orderId || !order) return
-      if (order.status !== 'PENDING' || expired) return
-      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
-      ;(async () => {
-        await checkRealStatus()
-        await loadOrder()
-        scheduleNextPoll()
-      })()
-    }
-    document.addEventListener('visibilitychange', handleVisibility)
-    return () => document.removeEventListener('visibilitychange', handleVisibility)
-  }, [orderId, order, expired, checkRealStatus, loadOrder, scheduleNextPoll])
-
+  // Kiểm tra thủ công: khách chủ động bấm nút mới gọi lại MoMo (qua
+  // fetchOrderViaQuery) — đây là 1 request duy nhất, vừa kiểm tra thật vừa
+  // trả về dữ liệu để cập nhật giao diện. Không còn cơ chế tự động kiểm
+  // tra nào khác (đã bỏ hẳn autoCheck sau khi MoMo redirect về, vì lần tải
+  // đầu tiên lúc vào trang giờ đã là 1 lượt kiểm tra thật rồi, tự động
+  // kiểm tra thêm lần nữa ngay sau đó chỉ tốn tài nguyên vô ích).
   const handleManualCheck = useCallback(async () => {
-    setChecking(true)
-    await checkRealStatus()
-    await loadOrder({ manual: true })
-    // Đơn vẫn đang chờ thì dời lại mốc tự động kiểm tra tiếp theo, tránh tra trùng
-    if (order?.status === 'PENDING' && !expired) {
-      pollAttemptRef.current = 0
-      scheduleNextPoll()
-    }
-  }, [checkRealStatus, loadOrder, order?.status, expired, scheduleNextPoll])
-
-  // -------------------------------------------------------------------
-  // Tự động bấm "Kiểm tra kết quả" khi khách vừa được /result chuyển sang
-  // (?autoCheck=1) — lúc này MoMo vừa redirect về nên giao dịch gần như
-  // chắc chắn đã có kết quả, không cần bắt khách tự bấm nút. Chỉ chạy
-  // đúng 1 lần (autoCheckDoneRef), sau đó dọn "autoCheck" khỏi URL để
-  // F5 lại trang không tự kiểm tra lặp lại vô ích.
-  // -------------------------------------------------------------------
-  useEffect(() => {
-    if (!router.isReady || !orderId) return
-    if (autoCheckDoneRef.current) return
-    if (!router.query.autoCheck) return
-
-    autoCheckDoneRef.current = true
-    handleManualCheck()
-
-    const { autoCheck, ...rest } = router.query
-    router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router.isReady, orderId])
+    await fetchOrderViaQuery({ manual: true })
+  }, [fetchOrderViaQuery])
 
   // ---------------------------------------------------------------------
   // Màn hình theo trạng thái
@@ -888,6 +817,17 @@ export default function ThanhToan() {
 
           <OrderMeta order={order} />
 
+          {order.payUrl && (
+            <a
+              href={order.payUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-3 rounded-xl bg-momo text-white text-sm font-semibold shadow-[0_10px_20px_-10px_rgba(165,0,100,0.6)] hover:bg-momo-dark hover:shadow-[0_14px_24px_-10px_rgba(165,0,100,0.7)] active:scale-[0.98] transition-all duration-200 ease-out mb-2 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-momo/40"
+            >
+              Mở app MoMo để thanh toán
+            </a>
+          )}
+
           <TabSwitcher active={activeTab} onChange={setActiveTab} />
 
           {/* Khung QR */}
@@ -1000,14 +940,8 @@ export default function ThanhToan() {
           </button>
 
           <div className="flex items-center justify-center gap-1.5 text-center text-stone-400 text-[11px] mt-2">
-            {nextPollInMs !== null && (
-              <span>Tự động kiểm tra lại sau {formatCountdown(nextPollInMs)}</span>
-            )}
             {lastCheckedAt && (
-              <>
-                <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span>Cập nhật lúc {formatClock(lastCheckedAt)}</span>
-              </>
+              <span>Cập nhật lúc {formatClock(lastCheckedAt)}</span>
             )}
           </div>
 

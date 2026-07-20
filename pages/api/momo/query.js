@@ -18,8 +18,15 @@
 //     dùng 1 lần, hết hạn rất nhanh, không dùng lại được và không dùng
 //     được cho đơn khác. Khách nhận về field cần cho giao diện thanh toán
 //     (isPaid/isStillPending/orderStatus/orderInfo/amount/paidAt/transId/
-//     storeName/aio_qr) — vẫn KHÔNG lộ payType, promotionInfo,
-//     partnerCode, requestId... như phía admin.
+//     storeName/aio_qr/createdAt/payUrl/deeplink) — vẫn KHÔNG lộ payType,
+//     promotionInfo, partnerCode, requestId... như phía admin.
+//
+//   LƯU Ý: route này giờ là nguồn dữ liệu DUY NHẤT cho trang /thanh-toan
+//   khi kiểm tra trạng thái đơn — trang đó KHÔNG còn gọi /api/momo/orders
+//   nữa (vì orders.js chỉ đọc Redis, có thể chưa có dữ liệu nếu đơn chưa
+//   từng được đồng bộ; còn route này hỏi thẳng MoMo nên luôn có kết quả
+//   thật). Vì vậy field trả về ở nhánh khách phải đủ cho toàn bộ UI, không
+//   được bớt field nào mà FE đang cần.
 
 import { queryMoMoTransaction } from '../../../lib/momo'
 import { getOrder, saveOrder } from '../../../lib/orders'
@@ -128,6 +135,17 @@ export default async function handler(req, res) {
         transId: data.transId?.toString() || orderData?.transId || null,
         storeName: orderData?.storeName ?? null,
         aio_qr: orderData?.aio_qr ?? null,
+        // Cần để FE (thanh-toan.js) tự tính đồng hồ đếm ngược 10 phút mà
+        // không phải gọi thêm /api/momo/orders — route này giờ là nguồn dữ
+        // liệu DUY NHẤT cho trang khách, nên phải trả đủ field UI cần.
+        createdAt: orderData?.createdAt ?? null,
+        // Link thanh toán MoMo gốc (mở app/trình duyệt MoMo trực tiếp) —
+        // chỉ có ở đơn mode=p2p (được lưu sẵn lúc create.js tạo đơn), null
+        // với đơn mode=scan. Đây là link công khai MoMo tự sinh cho ĐÚNG
+        // đơn này, không phải dữ liệu nội bộ nên an toàn để trả cho khách
+        // (khác với vietqr/payType — vẫn giữ ẩn như trước).
+        payUrl: orderData?.payUrl || null,
+        deeplink: orderData?.deeplink || null,
       })
     }
 
