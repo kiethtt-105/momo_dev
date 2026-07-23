@@ -111,15 +111,6 @@ function Spinner({ className = '' }) {
   )
 }
 
-// Icon +, dùng cho nút "Thêm đơn"
-function IconPlus(props) {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" {...props}>
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  )
-}
-
 // Icon nút nguồn, dùng cho trạng thái hệ thống
 function IconPower(props) {
   return (
@@ -291,14 +282,16 @@ function SystemStatusChip({ busy, onPause }) {
       onClick={onPause}
       disabled={busy}
       title="Dừng toàn bộ hệ thống"
-      className="group flex items-center gap-2 rounded-full bg-white/10 hover:bg-rose-500/20 pl-3 pr-3.5 py-2 text-xs font-semibold text-white/90 hover:text-rose-200 transition disabled:opacity-50 ring-1 ring-inset ring-white/15"
+      aria-label="Đang hoạt động — bấm để dừng toàn bộ hệ thống"
+      className="group flex items-center gap-2 shrink-0 rounded-full bg-white/10 hover:bg-rose-500/20 pl-3 pr-3.5 py-2 text-xs font-semibold text-white/90 hover:text-rose-200 transition disabled:opacity-50 ring-1 ring-inset ring-white/15"
     >
-      <span className="relative flex w-2 h-2">
+      <span className="relative flex w-2 h-2 shrink-0">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
         <span className="relative inline-flex rounded-full w-2 h-2 bg-emerald-400" />
       </span>
-      Đang hoạt động
-      <IconPower className="text-white/40 group-hover:text-rose-300 transition-colors" />
+      {/* Ẩn nhãn chữ trên màn rất hẹp để chip không đẩy vỡ header, chỉ còn chấm + icon */}
+      <span className="hidden sm:inline whitespace-nowrap">Đang hoạt động</span>
+      <IconPower className="text-white/40 group-hover:text-rose-300 transition-colors shrink-0" />
     </button>
   )
 }
@@ -382,7 +375,7 @@ function OrderDetailModal({ open, onClose, orderId }) {
       <div className="bg-white rounded-2xl shadow-2xl shadow-black/30 ring-1 ring-black/5 max-w-sm w-full p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-bold text-stone-900">Chi tiết giao dịch</h3>
-          <button type="button" onClick={onClose} className="text-stone-400 hover:text-stone-600 w-6 h-6 flex items-center justify-center">✕</button>
+          <button type="button" onClick={onClose} aria-label="Đóng" className="text-stone-400 hover:text-stone-600 w-6 h-6 flex items-center justify-center">✕</button>
         </div>
         {loading && <p className="text-sm text-stone-500 text-center py-6">Đang hỏi MoMo...</p>}
         {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
@@ -506,7 +499,8 @@ function TransactionRow({ tx, onRemove, onUpdate }) {
     <div className="bg-white rounded-2xl border border-stone-200/80 shadow-[0_1px_4px_-2px_rgba(33,26,29,0.06)] hover:shadow-[0_4px_16px_-6px_rgba(33,26,29,0.14)] hover:-translate-y-0.5 transition-all duration-300 p-4 relative">
       <button onClick={() => setConfirmRemove(true)}
         className="absolute top-3 right-3 text-stone-300 hover:text-stone-500 text-sm w-6 h-6 flex items-center justify-center"
-        title={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}>✕</button>
+        title={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}
+        aria-label={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}>✕</button>
 
       <ConfirmModal
         open={confirmRemove}
@@ -585,7 +579,7 @@ function StoreSelect({ stores, storeId, setStoreId }) {
       <select value={storeId} onChange={(e) => setStoreId(e.target.value)}
         className={`${INPUT} mb-4`}>
         {stores.map((s) => (
-          <option key={s.id} value={s.id}>{s.name}{s.default ? '' : ''}</option>
+          <option key={s.id} value={s.id}>{s.name}</option>
         ))}
       </select>
     </>
@@ -824,7 +818,8 @@ function ScanOrderCard({ order, selected, onSelect, onRemove, onUpdate }) {
     >
       <button onClick={(e) => { e.stopPropagation(); setConfirmRemove(true) }}
         className="absolute top-3 right-3 text-stone-300 hover:text-stone-500 text-sm w-6 h-6 flex items-center justify-center"
-        title={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}>✕</button>
+        title={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}
+        aria-label={isFinal ? 'Đóng giao dịch' : 'Hủy đơn'}>✕</button>
 
       <ConfirmModal
         open={confirmRemove}
@@ -1018,15 +1013,15 @@ export default function Home() {
         {/* ── Header: dải tối như thân máy POS ── */}
         <header className="bg-[#211D24] text-white">
           <div className="max-w-5xl mx-auto px-4 sm:px-8 py-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="relative shrink-0">
                 <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-br from-momo to-fuchsia-400 opacity-50 blur-[3px]" />
                 <img src="/main.jpg" alt="Momo Dev"
                   className="relative w-10 h-10 rounded-2xl object-cover ring-2 ring-white/20" />
               </div>
-              <div>
-                <h1 className="text-base font-extrabold leading-tight tracking-tight">Momo Dev</h1>
-                <p className="text-white/40 text-xs font-mono">
+              <div className="min-w-0">
+                <h1 className="text-base font-extrabold leading-tight tracking-tight truncate">Momo Dev</h1>
+                <p className="text-white/40 text-xs font-mono truncate">
                   {new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
                 </p>
               </div>

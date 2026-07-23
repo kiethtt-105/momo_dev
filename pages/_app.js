@@ -40,6 +40,18 @@ import { useRouter } from 'next/router'
 import '../styles/globals.css'
 import { Analytics } from '@vercel/analytics/react'
 
+// [ĐỒNG BỘ GIAO DIỆN] Toàn bộ dự án (gate này, index.js, thanh-toan.js) giờ
+// dùng chung 1 bảng theme "POS ticket": nền kem chấm bi ấm áp cho các màn
+// tương tác, nền tối #1B181F cho các màn trạng thái hệ thống (loading/paused),
+// thẻ trắng bo góc lớn kiểu vé giấy, viền đứt nét, accent màu momo. Định nghĩa
+// tập trung ở đây để 2 trang còn lại tái sử dụng y hệt, tránh lệch tông màu.
+const BG_DOTS_STYLE = {
+  backgroundColor: '#F3ECDA',
+  backgroundImage: 'radial-gradient(#E4D9BE 1px, transparent 1px)',
+  backgroundSize: '20px 20px',
+}
+const DARK_SURFACE = '#1B181F'
+
 // Các route KHÔNG cần đăng nhập admin — link gửi trực tiếp cho khách
 // (vd: /thanh-toan?orderId=xxx qua Zalo, tin nhắn...).
 const PUBLIC_ROUTES = ['/thanh-toan']
@@ -88,16 +100,25 @@ function PowerToggle({ checked, busy, onChange }) {
 // chỉ có lý do/thời điểm paused (nếu có) và switch để bật lại.
 function PausedGate({ meta, busy, onResume }) {
   return (
-    <main className="min-h-screen bg-stone-950 flex items-center justify-center px-4">
-      <div className="w-full max-w-xs text-center">
-        <h1 className="text-white text-lg font-bold mb-1">Hệ thống đang tạm dừng</h1>
+    <main
+      className="min-h-screen flex items-center justify-center px-4 relative overflow-hidden"
+      style={{ backgroundColor: DARK_SURFACE }}
+    >
+      {/* Blob mờ trang trí — cùng kiểu với màn paused ở index.js để 2 màn giống hệt nhau */}
+      <div className="pointer-events-none absolute -top-24 -left-24 w-96 h-96 rounded-full bg-rose-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-0 -right-24 w-96 h-96 rounded-full bg-momo/10 blur-3xl" />
+      <div className="relative w-full max-w-xs text-center">
+        <div className="w-16 h-16 rounded-3xl bg-rose-500/10 mx-auto mb-6 flex items-center justify-center">
+          <span className="w-3 h-3 rounded-full bg-rose-500 animate-pulse" />
+        </div>
+        <h1 className="text-white text-lg font-extrabold mb-1">Hệ thống đang tạm dừng</h1>
         {meta?.pausedAt ? (
-          <p className="text-stone-500 text-xs mb-10">
+          <p className="text-stone-500 text-xs mb-8">
             Tạm dừng lúc {new Date(meta.pausedAt).toLocaleString('vi-VN')}
             {meta.reason ? ` · ${meta.reason}` : ''}
           </p>
         ) : (
-          <div className="mb-10" />
+          <div className="mb-8" />
         )}
         <div className="flex flex-col items-center gap-3">
           <PowerToggle checked={false} busy={busy} onChange={() => onResume()} />
@@ -215,27 +236,34 @@ function LoginGate({ children }) {
 
   if (status === 'checking') {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-neutral-50">
-        <p className="text-neutral-400 text-sm">Đang kiểm tra phiên đăng nhập...</p>
+      <main
+        className="min-h-screen flex items-center justify-center gap-3"
+        style={{ backgroundColor: DARK_SURFACE }}
+      >
+        <Spinner className="w-5 h-5 text-white" />
+        <p className="text-stone-400 text-sm">Đang kiểm tra phiên đăng nhập...</p>
       </main>
     )
   }
 
   if (status === 'guest') {
     return (
-      <main className="min-h-screen flex items-center justify-center px-4 bg-neutral-50">
+      <main className="min-h-screen flex items-center justify-center px-4" style={BG_DOTS_STYLE}>
         <form
           onSubmit={handleSubmit}
-          className="w-full max-w-xs bg-white rounded-2xl border border-neutral-200 p-6"
+          className="w-full max-w-xs bg-white rounded-2xl border border-stone-200/80 shadow-[0_2px_8px_-4px_rgba(33,26,29,0.06),0_20px_48px_-28px_rgba(33,26,29,0.22)] p-6"
         >
-          <div className="w-12 h-12 rounded-xl bg-momo mx-auto mb-4 flex items-center justify-center text-white font-extrabold text-lg">
-            IPA
+          <div className="relative w-12 h-12 mx-auto mb-4">
+            <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-br from-momo to-fuchsia-400 opacity-50 blur-[3px]" />
+            <div className="relative w-12 h-12 rounded-2xl bg-[#211D24] flex items-center justify-center text-white font-extrabold text-lg ring-2 ring-white/20">
+              IPA
+            </div>
           </div>
-          <h1 className="text-lg font-bold text-neutral-900 text-center mb-1">
+          <h1 className="text-lg font-bold text-stone-900 text-center mb-1">
             Đăng nhập
           </h1>
-          <p className="text-neutral-500 text-sm text-center mb-5">
-            NHập MẬT KHẨU để tiếp tục
+          <p className="text-stone-500 text-sm text-center mb-5">
+            Nhập mật khẩu để tiếp tục
           </p>
 
           <input
@@ -244,7 +272,7 @@ function LoginGate({ children }) {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Mật khẩu"
             autoFocus
-            className="w-full rounded-xl border border-neutral-200 px-4 py-3 mb-3 focus:outline-none focus:ring-2 focus:ring-momo/40 focus:border-momo"
+            className="w-full rounded-xl border border-stone-200 px-4 py-3 mb-3 bg-white focus:outline-none focus:ring-4 focus:ring-momo/15 focus:border-momo transition-all duration-200"
             required
           />
 
@@ -255,8 +283,9 @@ function LoginGate({ children }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-momo text-white font-semibold hover:bg-momo-dark transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
+            {loading && <Spinner className="w-4 h-4 text-white" />}
             {loading ? 'Đang kiểm tra...' : 'Đăng nhập'}
           </button>
         </form>
@@ -270,8 +299,12 @@ function LoginGate({ children }) {
   // nháy trang chính rồi lại nháy sang màn paused ngay sau đó.
   if (paused === null) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-neutral-50">
-        <p className="text-neutral-400 text-sm">Đang kiểm tra trạng thái hệ thống...</p>
+      <main
+        className="min-h-screen flex items-center justify-center gap-3"
+        style={{ backgroundColor: DARK_SURFACE }}
+      >
+        <Spinner className="w-5 h-5 text-white" />
+        <p className="text-stone-400 text-sm">Đang kiểm tra trạng thái hệ thống...</p>
       </main>
     )
   }

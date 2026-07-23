@@ -195,14 +195,17 @@ function StatusBadge({ status }) {
   )
 }
 
-// Header logo dùng chung với trang chủ admin, kèm badge "kết nối an toàn" để
-// khách nhận ra ngay đây là trang thanh toán chính chủ, không phải link giả mạo.
+// Header logo dùng chung với trang chủ admin (cùng ảnh, cùng hiệu ứng viền
+// gradient mờ), kèm badge "kết nối an toàn" để khách nhận ra ngay đây là
+// trang thanh toán chính chủ, không phải link giả mạo.
 function BrandHeader() {
   return (
     <div className="flex items-center justify-between gap-3 mb-3">
       <div className="flex items-center gap-3">
-        <div className="w-11 h-11 shrink-0 rounded-2xl bg-momo flex items-center justify-center text-white font-extrabold text-lg shadow-[0_6px_16px_-6px_rgba(165,0,100,0.55)]">
-          M
+        <div className="relative shrink-0">
+          <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-br from-momo to-fuchsia-400 opacity-50 blur-[3px]" />
+          <img src="/main.jpg" alt="Momo Dev"
+            className="relative w-11 h-11 rounded-2xl object-cover ring-2 ring-white/40 shadow-[0_6px_16px_-6px_rgba(165,0,100,0.35)]" />
         </div>
         <div>
           <h1 className="text-lg font-extrabold text-stone-900 leading-tight tracking-tight">Momo Dev</h1>
@@ -299,9 +302,11 @@ function OrderMeta({ order }) {
   )
 }
 
-// Nền trang: gradient sáng, chuyển động nhẹ và nhanh — thay cho nền trắng
-// phẳng cũ (gây chói mắt). Dùng chung cho mọi màn hình (đang tải / lỗi /
-// PENDING / PAID / FAILED / EXPIRED).
+// Nền trang: cùng nền kem chấm bi "POS ticket" dùng chung với trang admin
+// (index.js) và màn login (_app.js) — trước đây trang này dùng gradient hồng/
+// cam/tím động riêng, giờ đồng bộ lại để khách bấm link từ trang admin sang
+// không cảm giác lạc sang 1 sản phẩm khác. Dùng chung cho mọi màn hình (đang
+// tải / lỗi / PENDING / PAID / FAILED / EXPIRED).
 function GradientMain({ children, className = '', padding = 'normal' }) {
   const padClass =
     padding === 'compact'
@@ -310,20 +315,14 @@ function GradientMain({ children, className = '', padding = 'normal' }) {
       ? 'relative px-4 py-6 sm:py-8'
       : 'relative px-4 py-8 sm:py-10'
   return (
-    <main className={`min-h-screen relative overflow-hidden ${className}`}>
-      <div className="absolute inset-0 -z-10 page-gradient-bg" />
-      <style jsx global>{`
-        @keyframes momoGradientMove {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
-        }
-        .page-gradient-bg {
-          background: linear-gradient(120deg, #ffe4ee, #ffedd5, #f3e8ff, #fee2e2, #ffe4ee);
-          background-size: 320% 320%;
-          animation: momoGradientMove 6s ease infinite;
-        }
-      `}</style>
+    <main
+      className={`min-h-screen relative overflow-hidden ${className}`}
+      style={{
+        backgroundColor: '#F3ECDA',
+        backgroundImage: 'radial-gradient(#E4D9BE 1px, transparent 1px)',
+        backgroundSize: '20px 20px',
+      }}
+    >
       <div className={padClass}>{children}</div>
     </main>
   )
@@ -698,7 +697,7 @@ export default function ThanhToan() {
           <div className="w-full max-w-sm mx-auto animate-[fadeIn_0.3s_ease]">
             <BrandHeader />
             <OrderMeta order={order} />
-            <div className={`rounded-3xl bg-stone-900 px-6 py-8 text-center relative overflow-hidden ${CARD_SHADOW}`}>
+            <div className={`rounded-3xl bg-[#211D24] px-6 py-8 text-center relative overflow-hidden ${CARD_SHADOW}`}>
               <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full bg-emerald-500/20 blur-2xl" />
               <div className="relative w-14 h-14 rounded-full bg-emerald-500/15 mx-auto mb-4 flex items-center justify-center text-2xl text-emerald-400">✓</div>
               <h1 className="relative text-xl font-extrabold text-white mb-1">Thanh toán thành công</h1>
@@ -787,7 +786,7 @@ export default function ThanhToan() {
           <SyncBanner message={syncMessage} />
 
           {/* Số tiền cần thanh toán — thẻ chính, chiếm trọng tâm thị giác */}
-          <div className="rounded-2xl bg-stone-900 px-4 py-3.5 mb-2 relative overflow-hidden shadow-[0_20px_40px_-20px_rgba(33,26,29,0.45)]">
+          <div className="rounded-2xl bg-[#211D24] px-4 py-3.5 mb-2 relative overflow-hidden shadow-[0_20px_40px_-20px_rgba(33,26,29,0.45)]">
             <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full bg-momo/25 blur-2xl" />
             <div className="absolute -left-10 -bottom-12 w-40 h-40 rounded-full bg-momo/10 blur-2xl" />
             <div className="relative flex items-end justify-between gap-3 flex-wrap">
