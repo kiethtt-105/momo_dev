@@ -28,7 +28,11 @@ const redis = Redis.fromEnv()
 
 // Đường dẫn KHÔNG BAO GIỜ bị chặn, kể cả khi đang paused — phải luôn gọi
 // được để còn mở lại hệ thống.
-const ALWAYS_ALLOWED = ['/api/admin/system-pause']
+const ALWAYS_ALLOWED = 
+  ['/api/admin/system-pause',
+    '/api/admin/login',
+    '/api/admin/session',
+  ]
 
 // TTL cache cờ "paused" trong bộ nhớ (ms). Mỗi edge instance tự cache
 // riêng, không chia sẻ giữa các instance/region -> đây chỉ giảm tải Redis,

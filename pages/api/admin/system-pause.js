@@ -17,7 +17,19 @@
 //      thêm cho giao diện nội bộ.
 //
 // route này LUÔN được middleware.js cho qua (không bao giờ bị 503 dù đang
-// paused) — xem ALWAYS_ALLOWED trong middleware.js.
+// paused) — xem ALWAYS_ALLOWED trong middleware.js. Route /api/admin/login
+// và /api/admin/session CŨNG PHẢI nằm trong ALWAYS_ALLOWED cùng lý do —
+// nếu không, đăng nhập / kiểm tra session sẽ bị 503 ngay giữa lúc paused,
+// tức là không ai đăng nhập lại được để bật hệ thống lên nữa.
+//
+// [MỚI] Khi action=on thành công -> LOGOUT LUÔN session admin của thiết bị
+// vừa gọi request này (xem clearSessionCookie() trong login.js). Lý do:
+// tránh trường hợp session cũ vẫn còn hiệu lực, cho phép bật lại hệ thống
+// bằng switch mà không cần đăng nhập lại — phá vỡ đúng tinh thần gốc "tạm
+// dừng cho tới khi có ai login lại" (login.js tự resumeSystem() khi đăng
+// nhập thành công). Áp dụng bất kể request được cho qua bằng key hay bằng
+// session — nếu qua bằng key mà trình duyệt đó tình cờ vẫn có cookie
+// session cũ thì cookie đó cũng bị xoá theo cho nhất quán.
 //
 // Cách dùng:
 //   GET  /api/admin/system-pause?key=XXX                  -> chỉ đọc trạng thái, không đổi gì
@@ -31,29 +43,17 @@
 // NEXT_PUBLIC_ để nút trên trang admin (chạy trong trình duyệt) cũng gửi
 // được key này lên. Đổi giá trị đó bất cứ lúc nào nếu nghi bị lộ — đổi
 // xong phải redeploy thì giá trị mới mới có hiệu lực ở phía trình duyệt.
-//
-// TỐI ƯU so với bản gốc:
-//   1. So sánh key bằng thời gian không đổi (constant-time) thay vì === để
-//      giảm rủi ro timing attack dò key qua độ trễ phản hồi.
-//   2. Gộp việc set 2 key Redis (paused + meta) bằng Promise.all thay vì
-//      await tuần tự -> giảm độ trễ round-trip khi bật pause.
-//   3. Trả lỗi 400 sớm hơn cho action không hợp lệ, tránh gọi Redis thừa.
-//   4. [MỚI] Xác thực chấp nhận thêm session admin (chỉ khi key thiếu/sai) —
-//      đỡ phải gõ/lộ key trong trình duyệt khi thao tác từ trang quản trị.
-//   5. [MỚI] Dữ liệu trả về có thêm `_authVia` ("key" | "session") để biết
-//      request vừa rồi được cho qua nhờ cách nào — hữu ích khi debug
-//      "tại sao request không có key mà vẫn được chấp nhận".
 
 import { Redis } from '@upstash/redis'
 import crypto from 'crypto'
-import { verifySession, refreshSession } from './login'
+import { verifySession, refreshSession, clearSessionCookie } from './login'
 
 const redis = Redis.fromEnv()
 
 // Đánh dấu phiên bản code — đổi mỗi lần sửa file này. Dùng để XÁC NHẬN
 // chắc chắn qua response xem Vercel đang chạy đúng bản mới nhất hay vẫn
 // còn bản cũ (tránh nghi ngờ mơ hồ "không biết đã deploy chưa").
-const CODE_VERSION = 'v4-key-or-session-2026-07-20'
+const CODE_VERSION = 'v5-pause-logs-out-session-2026-07-23'
 
 const REDIS_KEY = 'system:paused'
 const REDIS_META_KEY = 'system:paused:meta'
@@ -143,7 +143,16 @@ export default async function handler(req, res) {
     const reason = req.body?.reason || req.query.reason || null
     const meta = { pausedAt: new Date().toISOString(), reason }
     await Promise.all([redis.set(REDIS_KEY, '1'), redis.set(REDIS_META_KEY, JSON.stringify(meta))])
-    console.log(`[system-pause] TURNED ON by ${ip} (via=${via}) @ ${new Date().toISOString()}${reason ? ` — lý do: ${reason}` : ''}`)
+
+    // [MỚI] Logout thiết bị hiện tại — ghi đè lên Set-Cookie mà
+    // refreshSession() có thể đã set bên trong authorize() phía trên (via
+    // session). clearSessionCookie() gọi setHeader('Set-Cookie', ...) nên
+    // sẽ THAY THẾ giá trị cũ, không cộng dồn — kết quả cuối cùng gửi về
+    // browser luôn là "xoá cookie", không phải "gia hạn rồi lại xoá" bị
+    // lẫn lộn.
+    clearSessionCookie(res)
+
+    console.log(`[system-pause] TURNED ON by ${ip} (via=${via}) @ ${new Date().toISOString()}${reason ? ` — lý do: ${reason}` : ''} — đã logout session thiết bị này`)
     // Trả thẳng giá trị VỪA GHI, không đọc lại Redis ngay sau khi ghi.
     // Lý do: nếu Redis là Upstash "Global" (multi-region), đọc lại ngay
     // sau khi ghi có thể rơi vào 1 replica chưa kịp đồng bộ và trả về giá
@@ -154,7 +163,7 @@ export default async function handler(req, res) {
     // (middleware đọc Redis độc lập, không đi qua đường này) — nếu domain
     // đang dùng Redis Global, vẫn nên đổi sang Regional để đảm bảo
     // middleware chặn request ngay lập tức, không trễ vài trăm ms~vài giây.
-    return res.status(200).json({ paused: true, ...meta, _version: CODE_VERSION, _authVia: via })
+    return res.status(200).json({ paused: true, ...meta, _version: CODE_VERSION, _authVia: via, loggedOut: true })
   }
 
   if (action === 'off') {

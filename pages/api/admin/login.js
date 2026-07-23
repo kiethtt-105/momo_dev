@@ -14,6 +14,12 @@ const COOKIE_NAME    = 'momo_admin_session'
 // Session KHÔNG hết hạn theo thời gian nữa — chỉ mất hiệu lực khi:
 //  1) User bấm logout (session.js DELETE xoá cookie)
 //  2) Device (User-Agent) đổi so với lúc login
+//  3) [MỚI] Admin bấm "Tạm dừng hệ thống" — xem clearSessionCookie() bên
+//     dưới, được system-pause.js gọi khi action=on thành công, để buộc
+//     phải đăng nhập lại (và login lại sẽ tự resumeSystem()) — đúng tinh
+//     thần gốc "tạm dừng cho tới khi có ai login lại", không cho phép
+//     session cũ "lách qua" bằng cách giữ nguyên cookie rồi bật lại bằng
+//     switch mà không cần login.
 // Cookie vẫn cần Max-Age để browser giữ lại, dùng luôn mức trần mà
 // Chrome/Safari cho phép (400 ngày) — quá số này browser tự cắt về mốc đó.
 const COOKIE_MAX_AGE_SEC = 400 * 24 * 60 * 60
@@ -107,7 +113,8 @@ export function verifySession(req) {
 // Gọi sau khi verifySession() == true, trong các route cần giữ phiên "rolling":
 // cấp lại cookie mới với Max-Age=400 ngày tính lại từ thời điểm hiện tại.
 // Nhờ vậy chỉ cần admin còn thao tác (dù cách nhau bao lâu, miễn < 400 ngày/lần)
-// thì session không bao giờ tự rụng — chỉ mất khi bấm logout.
+// thì session không bao giờ tự rụng — chỉ mất khi bấm logout hoặc pause (xem
+// clearSessionCookie()).
 export function refreshSession(req, res) {
   const payload = getValidPayload(req)
   if (!payload) return false
@@ -125,6 +132,23 @@ export function refreshSession(req, res) {
   ])
 
   return true
+}
+
+// [MỚI] Xoá cookie session của THIẾT BỊ ĐANG GỌI request này (Max-Age=0 ->
+// browser tự xoá cookie ngay). Dùng khi:
+//   - Logout thủ công (session.js DELETE)
+//   - system-pause.js: bật pause thành công -> logout luôn thiết bị vừa bấm
+//     pause, để buộc phải đăng nhập lại mới thao tác được tiếp — login lại
+//     sẽ tự resumeSystem() (xem handler bên dưới), không có đường nào khác
+//     để "bật lại" ngoài việc đăng nhập.
+// An toàn khi gọi dù thiết bị đó chưa hề có cookie — Set-Cookie Max-Age=0
+// chỉ là chỉ thị "xoá nếu có", không lỗi nếu không có.
+export function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', [
+    `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${
+      process.env.NODE_ENV === 'production' ? '; Secure' : ''
+    }`,
+  ])
 }
 
 export default async function handler(req, res) {
